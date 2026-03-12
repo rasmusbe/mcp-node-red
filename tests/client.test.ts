@@ -48,6 +48,42 @@ describe('NodeRedClient', () => {
       });
     });
 
+    it('should parse subflows in flows response', async () => {
+      const mockFlows = {
+        rev: 'abc123',
+        flows: [
+          { id: '1', type: 'tab', label: 'Flow 1' },
+          {
+            id: 'sf1',
+            type: 'subflow',
+            name: 'My Subflow',
+            in: [{ wires: [{ id: 'n1', port: 0 }] }],
+            out: [{ wires: [{ id: 'n2', port: 0 }] }],
+            nodes: [{ id: 'n1', type: 'function', z: 'sf1' }],
+          },
+        ],
+      };
+
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue(mockFlows),
+          text: vi.fn(),
+        },
+      } as any);
+
+      const result = await client.getFlows();
+
+      expect(result.flows).toHaveLength(2);
+      expect(result.flows[1]).toMatchObject({
+        id: 'sf1',
+        type: 'subflow',
+        name: 'My Subflow',
+        in: [{ wires: [{ id: 'n1', port: 0 }] }],
+        out: [{ wires: [{ id: 'n2', port: 0 }] }],
+      });
+    });
+
     it('should throw error on failed request', async () => {
       vi.mocked(request).mockResolvedValue({
         statusCode: 500,
@@ -997,6 +1033,93 @@ describe('NodeRedClient', () => {
 
       await expect(client.removeNodeModule('nonexistent')).rejects.toThrow(
         'Failed to remove node module: 404'
+      );
+    });
+  });
+
+  describe('getGlobalFlow', () => {
+    it('should fetch the global flow with subflows', async () => {
+      const mockGlobal = {
+        id: 'global',
+        configs: [],
+        subflows: [
+          {
+            id: 'sf1',
+            type: 'subflow',
+            name: 'My Subflow',
+            in: [],
+            out: [],
+            nodes: [],
+          },
+        ],
+      };
+
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue(mockGlobal),
+          text: vi.fn(),
+        },
+      } as any);
+
+      const result = await client.getGlobalFlow();
+
+      expect(result).toEqual(mockGlobal);
+      expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/global', {
+        method: 'GET',
+        headers: expect.objectContaining({ 'Node-RED-API-Version': 'v2' }),
+      });
+    });
+
+    it('should throw on non-200 response', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 500,
+        body: { text: vi.fn().mockResolvedValue('error') },
+      } as any);
+
+      await expect(client.getGlobalFlow()).rejects.toThrow('Failed to get global flow: 500');
+    });
+  });
+
+  describe('updateGlobalFlow', () => {
+    it('should PUT the global flow and return id', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ id: 'global' }),
+          text: vi.fn(),
+        },
+      } as any);
+
+      const globalFlow = { id: 'global' as const, configs: [], subflows: [] };
+      const result = await client.updateGlobalFlow(globalFlow);
+
+      expect(result).toEqual({ id: 'global' });
+      expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/global', {
+        method: 'PUT',
+        headers: expect.objectContaining({ 'Node-RED-API-Version': 'v2' }),
+        body: JSON.stringify(globalFlow),
+      });
+    });
+
+    it('should return {id: "global"} on 204 response', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 204,
+        body: { text: vi.fn(), json: vi.fn() },
+      } as any);
+
+      const result = await client.updateGlobalFlow({ id: 'global' as const });
+      expect(result).toEqual({ id: 'global' });
+    });
+
+    it('should throw on error response', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 400,
+        body: { text: vi.fn().mockResolvedValue('Bad Request') },
+      } as any);
+
+      await expect(client.updateGlobalFlow({ id: 'global' as const })).rejects.toThrow(
+        'Failed to update global flow: 400'
       );
     });
   });

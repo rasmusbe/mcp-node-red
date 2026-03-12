@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeRedClient } from '../src/client.js';
+import { createSubflow } from '../src/tools/create-subflow.js';
 import { deleteContext } from '../src/tools/delete-context.js';
 import { deleteFlow } from '../src/tools/delete-flow.js';
+import { deleteSubflow } from '../src/tools/delete-subflow.js';
 import { getContext } from '../src/tools/get-context.js';
 import { getFlowState } from '../src/tools/get-flow-state.js';
 import { getFlows } from '../src/tools/get-flows.js';
 import { getNodes } from '../src/tools/get-nodes.js';
+import { getSubflows } from '../src/tools/get-subflows.js';
 import { installNode } from '../src/tools/install-node.js';
 import { removeNodeModule } from '../src/tools/remove-node-module.js';
 import { setDebugState } from '../src/tools/set-debug-state.js';
@@ -13,6 +16,7 @@ import { setFlowState } from '../src/tools/set-flow-state.js';
 import { setNodeModuleState } from '../src/tools/set-node-module-state.js';
 import { triggerInject } from '../src/tools/trigger-inject.js';
 import { updateFlow } from '../src/tools/update-flow.js';
+import { updateSubflow } from '../src/tools/update-subflow.js';
 import { validateFlow } from '../src/tools/validate-flow.js';
 
 describe('Tool Handlers', () => {
@@ -34,6 +38,8 @@ describe('Tool Handlers', () => {
       removeNodeModule: vi.fn(),
       triggerInject: vi.fn(),
       setDebugNodeState: vi.fn(),
+      getGlobalFlow: vi.fn(),
+      updateGlobalFlow: vi.fn(),
     } as any;
   });
 
@@ -50,6 +56,30 @@ describe('Tool Handlers', () => {
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
+      expect(JSON.parse(result.content[0].text)).toEqual(mockFlowsData);
+    });
+
+    it('should return flows including subflows', async () => {
+      const mockFlowsData = {
+        rev: 'abc123',
+        flows: [
+          { id: '1', type: 'tab', label: 'Flow 1' },
+          {
+            id: 'sf1',
+            type: 'subflow',
+            name: 'My Subflow',
+            in: [{ wires: [{ id: 'n1', port: 0 }] }],
+            out: [{ wires: [{ id: 'n2', port: 0 }] }],
+            nodes: [{ id: 'n1', type: 'function', z: 'sf1' }],
+          },
+        ],
+      };
+
+      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData as any);
+
+      const result = await getFlows(mockClient);
+
+      expect(result.content).toHaveLength(1);
       expect(JSON.parse(result.content[0].text)).toEqual(mockFlowsData);
     });
   });
@@ -91,6 +121,34 @@ describe('Tool Handlers', () => {
       });
 
       expect(mockClient.updateFlow).toHaveBeenCalledWith('1', expect.objectContaining({ id: '1' }));
+    });
+
+    it('should pass through subflow fields (name, in, out ports)', async () => {
+      vi.mocked(mockClient.updateFlow).mockResolvedValue({ id: 'sf1' });
+
+      const subflowData = {
+        type: 'subflow',
+        name: 'My Subflow',
+        in: [{ wires: [{ id: 'n1', port: 0 }] }],
+        out: [{ wires: [{ id: 'n2', port: 0 }] }],
+        nodes: [{ id: 'n1', type: 'function', z: 'sf1' }],
+      };
+
+      await updateFlow(mockClient, {
+        flowId: 'sf1',
+        updates: JSON.stringify(subflowData),
+      });
+
+      expect(mockClient.updateFlow).toHaveBeenCalledWith(
+        'sf1',
+        expect.objectContaining({
+          id: 'sf1',
+          type: 'subflow',
+          name: 'My Subflow',
+          in: [{ wires: [{ id: 'n1', port: 0 }] }],
+          out: [{ wires: [{ id: 'n2', port: 0 }] }],
+        })
+      );
     });
   });
 
@@ -504,6 +562,121 @@ describe('Tool Handlers', () => {
       await expect(
         setDebugState(mockClient, { nodeId: 'nonexistent', enabled: true })
       ).rejects.toThrow('Failed to enable debug node: 404');
+    });
+  });
+
+  describe('getSubflows', () => {
+    it('should return subflows array from global flow', async () => {
+      const mockGlobal = {
+        id: 'global',
+        configs: [],
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow', in: [], out: [], nodes: [] }],
+      };
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(mockGlobal as any);
+
+      const result = await getSubflows(mockClient);
+      expect(JSON.parse(result.content[0].text)).toEqual(mockGlobal.subflows);
+    });
+
+    it('should return empty array when no subflows', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global' } as any);
+
+      const result = await getSubflows(mockClient);
+      expect(JSON.parse(result.content[0].text)).toEqual([]);
+    });
+  });
+
+  describe('createSubflow', () => {
+    it('should create a subflow and return its id', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+
+      const result = await createSubflow(mockClient, {
+        subflow: JSON.stringify({ id: 'sf1', type: 'subflow', name: 'My Subflow', nodes: [] }),
+      });
+
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subflows: expect.arrayContaining([
+            expect.objectContaining({ id: 'sf1', name: 'My Subflow' }),
+          ]),
+        })
+      );
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1' });
+    });
+
+    it('should throw when subflow id already exists', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'Existing' }],
+      } as any);
+
+      await expect(
+        createSubflow(mockClient, {
+          subflow: JSON.stringify({ id: 'sf1', type: 'subflow', name: 'Duplicate', nodes: [] }),
+        })
+      ).rejects.toThrow('already exists');
+    });
+
+    it('should throw on invalid JSON', async () => {
+      await expect(createSubflow(mockClient, { subflow: 'not json' })).rejects.toThrow(
+        'Invalid JSON'
+      );
+    });
+  });
+
+  describe('updateSubflow', () => {
+    it('should update a subflow and return its id', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
+      } as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+
+      const result = await updateSubflow(mockClient, {
+        subflowId: 'sf1',
+        updates: JSON.stringify({ name: 'New Name' }),
+      });
+
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subflows: [expect.objectContaining({ id: 'sf1', name: 'New Name' })],
+        })
+      );
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1' });
+    });
+
+    it('should throw when subflow not found', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
+
+      await expect(
+        updateSubflow(mockClient, { subflowId: 'missing', updates: JSON.stringify({ name: 'X' }) })
+      ).rejects.toThrow('not found');
+    });
+  });
+
+  describe('deleteSubflow', () => {
+    it('should delete a subflow and return confirmation', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow' }],
+      } as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+
+      const result = await deleteSubflow(mockClient, { subflowId: 'sf1' });
+
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+        expect.objectContaining({ subflows: [] })
+      );
+      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'sf1' });
+    });
+
+    it('should throw when subflow not found', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
+
+      await expect(deleteSubflow(mockClient, { subflowId: 'missing' })).rejects.toThrow(
+        'not found'
+      );
     });
   });
 });

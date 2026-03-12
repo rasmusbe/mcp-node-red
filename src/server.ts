@@ -4,8 +4,10 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { NodeRedClient } from './client.js';
 import { ConfigSchema } from './schemas.js';
 import { createFlow } from './tools/create-flow.js';
+import { createSubflow } from './tools/create-subflow.js';
 import { deleteContext } from './tools/delete-context.js';
 import { deleteFlow } from './tools/delete-flow.js';
+import { deleteSubflow } from './tools/delete-subflow.js';
 import { getContext } from './tools/get-context.js';
 import { getDiagnostics } from './tools/get-diagnostics.js';
 import { getFlowState } from './tools/get-flow-state.js';
@@ -13,6 +15,7 @@ import { getFlows } from './tools/get-flows.js';
 import { getNodeHelp } from './tools/get-node-help.js';
 import { getNodes } from './tools/get-nodes.js';
 import { getSettings } from './tools/get-settings.js';
+import { getSubflows } from './tools/get-subflows.js';
 import { installNode } from './tools/install-node.js';
 import { removeNodeModule } from './tools/remove-node-module.js';
 import { setDebugState } from './tools/set-debug-state.js';
@@ -20,6 +23,7 @@ import { setFlowState } from './tools/set-flow-state.js';
 import { setNodeModuleState } from './tools/set-node-module-state.js';
 import { triggerInject } from './tools/trigger-inject.js';
 import { updateFlow } from './tools/update-flow.js';
+import { updateSubflow } from './tools/update-subflow.js';
 import { validateFlow } from './tools/validate-flow.js';
 
 export function createServer() {
@@ -124,6 +128,66 @@ export function createServer() {
             },
           },
           required: ['flowId'],
+        },
+      },
+      {
+        name: 'get_subflows',
+        description:
+          'Get all subflow definitions from Node-RED. Subflows are reusable flow components stored in the global flow.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'create_subflow',
+        description:
+          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. The subflow is added to the global flow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            subflow: {
+              type: 'string',
+              description:
+                'JSON string with subflow data: {id, type: "subflow", name, in: [], out: [], nodes: [], configs: []}',
+            },
+          },
+          required: ['subflow'],
+        },
+      },
+      {
+        name: 'update_subflow',
+        description:
+          'Update an existing subflow definition by ID. Only the specified subflow is modified.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            subflowId: {
+              type: 'string',
+              description: 'ID of the subflow to update',
+            },
+            updates: {
+              type: 'string',
+              description:
+                'JSON string with fields to update: {name, in, out, nodes, configs, env, ...}',
+            },
+          },
+          required: ['subflowId', 'updates'],
+        },
+      },
+      {
+        name: 'delete_subflow',
+        description:
+          'Delete a subflow definition from Node-RED by ID. Removes the subflow from the global flow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            subflowId: {
+              type: 'string',
+              description: 'ID of the subflow to delete',
+            },
+          },
+          required: ['subflowId'],
         },
       },
       {
@@ -359,6 +423,14 @@ export function createServer() {
           return await validateFlow(client, request.params.arguments);
         case 'delete_flow':
           return await deleteFlow(client, request.params.arguments);
+        case 'get_subflows':
+          return await getSubflows(client);
+        case 'create_subflow':
+          return await createSubflow(client, request.params.arguments);
+        case 'update_subflow':
+          return await updateSubflow(client, request.params.arguments);
+        case 'delete_subflow':
+          return await deleteSubflow(client, request.params.arguments);
         case 'get_flow_state':
           return await getFlowState(client);
         case 'set_flow_state':

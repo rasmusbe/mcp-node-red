@@ -6,6 +6,7 @@ import type {
   NodeModule,
   NodeRedDiagnostics,
   NodeRedFlowsResponse,
+  NodeRedGlobalFlowResponse,
   NodeRedSettings,
   UpdateFlowRequest,
 } from './schemas.js';
@@ -14,6 +15,7 @@ import {
   NodeModuleSchema,
   NodeRedDiagnosticsSchema,
   NodeRedFlowsResponseSchema,
+  NodeRedGlobalFlowResponseSchema,
   NodeRedSettingsSchema,
 } from './schemas.js';
 
@@ -115,6 +117,40 @@ export class NodeRedClient {
 
     if (response.statusCode === 204) {
       return { id: flowId };
+    }
+    const data = await response.body.json();
+    return data as { id: string };
+  }
+
+  async getGlobalFlow(): Promise<NodeRedGlobalFlowResponse> {
+    const response = await request(`${this.baseUrl}/flow/global`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (response.statusCode !== 200) {
+      const body = await response.body.text();
+      throw new Error(`Failed to get global flow: ${response.statusCode}\n${body}`);
+    }
+
+    const data = await response.body.json();
+    return NodeRedGlobalFlowResponseSchema.parse(data);
+  }
+
+  async updateGlobalFlow(flowData: NodeRedGlobalFlowResponse): Promise<{ id: string }> {
+    const response = await request(`${this.baseUrl}/flow/global`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(flowData),
+    });
+
+    if (response.statusCode !== 200 && response.statusCode !== 204) {
+      const body = await response.body.text();
+      throw new Error(`Failed to update global flow: ${response.statusCode}\n${body}`);
+    }
+
+    if (response.statusCode === 204) {
+      return { id: 'global' };
     }
     const data = await response.body.json();
     return data as { id: string };

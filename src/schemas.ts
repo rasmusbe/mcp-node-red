@@ -28,21 +28,58 @@ export const NodeRedConfigSchema = z
   })
   .passthrough();
 
-export const NodeRedItemSchema = z.union([NodeRedFlowSchema, NodeRedNodeSchema]);
+export const NodeRedSubflowPortSchema = z
+  .object({
+    wires: z.array(z.object({ id: z.string(), port: z.number().optional() })).optional(),
+  })
+  .passthrough();
+
+export const NodeRedSubflowSchema = z
+  .object({
+    id: z.string(),
+    type: z.literal('subflow'),
+    name: z.string(),
+    info: z.string().optional(),
+    in: z.array(NodeRedSubflowPortSchema).optional(),
+    out: z.array(NodeRedSubflowPortSchema).optional(),
+    nodes: z.array(NodeRedNodeSchema).optional(),
+    configs: z.array(NodeRedConfigSchema).optional(),
+    env: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
+
+export const NodeRedItemSchema = z.union([
+  NodeRedFlowSchema,
+  NodeRedSubflowSchema,
+  NodeRedNodeSchema,
+]);
 
 export const NodeRedFlowsResponseSchema = z.object({
   rev: z.string(),
   flows: z.array(NodeRedItemSchema),
 });
 
-export const UpdateFlowRequestSchema = z.object({
-  id: z.string(),
-  label: z.string().optional(),
-  disabled: z.boolean().optional(),
-  info: z.string().optional(),
-  nodes: z.array(NodeRedNodeSchema).optional(),
+export const NodeRedGlobalFlowResponseSchema = z.object({
+  id: z.literal('global'),
   configs: z.array(NodeRedConfigSchema).optional(),
+  subflows: z.array(NodeRedSubflowSchema).optional(),
 });
+
+export const UpdateFlowRequestSchema = z
+  .object({
+    id: z.string(),
+    type: z.string().optional(),
+    label: z.string().optional(),
+    name: z.string().optional(),
+    disabled: z.boolean().optional(),
+    info: z.string().optional(),
+    in: z.array(z.unknown()).optional(),
+    out: z.array(z.unknown()).optional(),
+    env: z.array(z.unknown()).optional(),
+    nodes: z.array(NodeRedNodeSchema).optional(),
+    configs: z.array(NodeRedConfigSchema).optional(),
+  })
+  .passthrough();
 
 export const FlowStateSchema = z.object({
   state: z.enum(['start', 'stop']),
@@ -104,7 +141,9 @@ export const ConfigSchema = z.object({
 export type NodeRedNode = z.infer<typeof NodeRedNodeSchema>;
 export type NodeRedFlow = z.infer<typeof NodeRedFlowSchema>;
 export type NodeRedConfig = z.infer<typeof NodeRedConfigSchema>;
+export type NodeRedSubflow = z.infer<typeof NodeRedSubflowSchema>;
 export type NodeRedItem = z.infer<typeof NodeRedItemSchema>;
+export type NodeRedGlobalFlowResponse = z.infer<typeof NodeRedGlobalFlowResponseSchema>;
 export type NodeRedFlowsResponse = z.infer<typeof NodeRedFlowsResponseSchema>;
 export type UpdateFlowRequest = z.infer<typeof UpdateFlowRequestSchema>;
 export type FlowState = z.infer<typeof FlowStateSchema>;
