@@ -156,6 +156,25 @@ export class NodeRedClient {
     return data as { id: string };
   }
 
+  async putFlows(
+    flowsData: NodeRedFlowsResponse,
+    deploymentType: 'full' | 'flows' | 'nodes' = 'full'
+  ): Promise<void> {
+    const headers = { ...this.getHeaders(), 'Node-RED-Deployment-Type': deploymentType };
+    const response = await request(`${this.baseUrl}/flows`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(flowsData),
+    });
+
+    if (response.statusCode !== 200 && response.statusCode !== 204) {
+      const body = await response.body.text();
+      throw new Error(`Failed to update flows: ${response.statusCode}\n${body}`);
+    }
+
+    await response.body.text();
+  }
+
   async deleteFlow(flowId: string): Promise<void> {
     const response = await request(`${this.baseUrl}/flow/${flowId}`, {
       method: 'DELETE',

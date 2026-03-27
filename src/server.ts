@@ -4,9 +4,11 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { NodeRedClient } from './client.js';
 import { ConfigSchema } from './schemas.js';
 import { createFlow } from './tools/create-flow.js';
+import { createGlobalConfigNode } from './tools/create-global-config-node.js';
 import { createSubflow } from './tools/create-subflow.js';
 import { deleteContext } from './tools/delete-context.js';
 import { deleteFlow } from './tools/delete-flow.js';
+import { deleteGlobalConfigNode } from './tools/delete-global-config-node.js';
 import { deleteSubflow } from './tools/delete-subflow.js';
 import { getContext } from './tools/get-context.js';
 import { getDiagnostics } from './tools/get-diagnostics.js';
@@ -23,6 +25,7 @@ import { setFlowState } from './tools/set-flow-state.js';
 import { setNodeModuleState } from './tools/set-node-module-state.js';
 import { triggerInject } from './tools/trigger-inject.js';
 import { updateFlow } from './tools/update-flow.js';
+import { updateGlobalConfigNode } from './tools/update-global-config-node.js';
 import { updateSubflow } from './tools/update-subflow.js';
 import { validateFlow } from './tools/validate-flow.js';
 
@@ -188,6 +191,57 @@ export function createServer() {
             },
           },
           required: ['subflowId'],
+        },
+      },
+      {
+        name: 'create_global_config_node',
+        description:
+          'Create a new global config node (no z property) accessible from all flows. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if a node with that id already exists or if the node contains a z property.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            node: {
+              type: 'string',
+              description:
+                'JSON string of the config node object with id, type, name, and type-specific fields. Must not include a z property.',
+            },
+          },
+          required: ['node'],
+        },
+      },
+      {
+        name: 'update_global_config_node',
+        description:
+          'Update an existing global config node by replacing it. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if the node does not exist, has a z property, or the replacement contains a z property.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            nodeId: {
+              type: 'string',
+              description: 'ID of the global config node to update',
+            },
+            node: {
+              type: 'string',
+              description:
+                'JSON string with the replacement node object. Must not include a z property.',
+            },
+          },
+          required: ['nodeId', 'node'],
+        },
+      },
+      {
+        name: 'delete_global_config_node',
+        description:
+          'Delete a global config node by ID. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if the node does not exist, has a z property, or is still referenced by other nodes.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            nodeId: {
+              type: 'string',
+              description: 'ID of the global config node to delete',
+            },
+          },
+          required: ['nodeId'],
         },
       },
       {
@@ -431,6 +485,12 @@ export function createServer() {
           return await updateSubflow(client, request.params.arguments);
         case 'delete_subflow':
           return await deleteSubflow(client, request.params.arguments);
+        case 'create_global_config_node':
+          return await createGlobalConfigNode(client, request.params.arguments);
+        case 'update_global_config_node':
+          return await updateGlobalConfigNode(client, request.params.arguments);
+        case 'delete_global_config_node':
+          return await deleteGlobalConfigNode(client, request.params.arguments);
         case 'get_flow_state':
           return await getFlowState(client);
         case 'set_flow_state':
