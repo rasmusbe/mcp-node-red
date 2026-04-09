@@ -43,7 +43,6 @@ describe('Tool Handlers', () => {
       setDebugNodeState: vi.fn(),
       getGlobalFlow: vi.fn(),
       updateGlobalFlow: vi.fn(),
-      putFlows: vi.fn(),
     } as any;
   });
 
@@ -685,35 +684,30 @@ describe('Tool Handlers', () => {
   });
 
   describe('createGlobalConfigNode', () => {
-    const mockFlows = {
-      rev: 'rev1',
-      flows: [{ id: 'tab1', type: 'tab', label: 'Flow 1' }],
-    };
+    const mockGlobalFlow = { id: 'global', configs: [], subflows: [] };
 
     it('should create a global config node and return its id', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlows as any);
-      vi.mocked(mockClient.putFlows).mockResolvedValue(undefined);
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(mockGlobalFlow as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
 
       const result = await createGlobalConfigNode(mockClient, {
         node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker', name: 'My Broker' }),
       });
 
-      expect(mockClient.putFlows).toHaveBeenCalledWith(
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
         expect.objectContaining({
-          rev: 'rev1',
-          flows: expect.arrayContaining([
+          configs: expect.arrayContaining([
             expect.objectContaining({ id: 'cfg1', type: 'mqtt-broker' }),
           ]),
-        }),
-        'nodes'
+        })
       );
       expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1' });
     });
 
     it('should throw when node id already exists', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'cfg1', type: 'mqtt-broker' }],
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
       } as any);
 
       await expect(
@@ -724,8 +718,6 @@ describe('Tool Handlers', () => {
     });
 
     it('should throw when node has a z property', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlows as any);
-
       await expect(
         createGlobalConfigNode(mockClient, {
           node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker', z: 'tab1' }),
@@ -741,36 +733,31 @@ describe('Tool Handlers', () => {
   });
 
   describe('updateGlobalConfigNode', () => {
-    const mockFlows = {
-      rev: 'rev1',
-      flows: [
-        { id: 'tab1', type: 'tab', label: 'Flow 1' },
-        { id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' },
-      ],
-    };
-
     it('should update a global config node and return its id', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlows as any);
-      vi.mocked(mockClient.putFlows).mockResolvedValue(undefined);
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [{ id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' }],
+      } as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
 
       const result = await updateGlobalConfigNode(mockClient, {
         nodeId: 'cfg1',
         node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker', name: 'New Broker' }),
       });
 
-      expect(mockClient.putFlows).toHaveBeenCalledWith(
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
         expect.objectContaining({
-          flows: expect.arrayContaining([
-            expect.objectContaining({ id: 'cfg1', name: 'New Broker' }),
-          ]),
-        }),
-        'nodes'
+          configs: [expect.objectContaining({ id: 'cfg1', name: 'New Broker' })],
+        })
       );
       expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1' });
     });
 
     it('should throw when node not found', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({ rev: 'rev1', flows: [] } as any);
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [],
+      } as any);
 
       await expect(
         updateGlobalConfigNode(mockClient, {
@@ -780,26 +767,7 @@ describe('Tool Handlers', () => {
       ).rejects.toThrow('not found');
     });
 
-    it('should throw when existing node has a z property', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'cfg1', type: 'mqtt-broker', z: 'tab1' }],
-      } as any);
-
-      await expect(
-        updateGlobalConfigNode(mockClient, {
-          nodeId: 'cfg1',
-          node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker' }),
-        })
-      ).rejects.toThrow('z property');
-    });
-
     it('should throw when replacement has a z property', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'cfg1', type: 'mqtt-broker' }],
-      } as any);
-
       await expect(
         updateGlobalConfigNode(mockClient, {
           nodeId: 'cfg1',
@@ -817,52 +785,43 @@ describe('Tool Handlers', () => {
 
   describe('deleteGlobalConfigNode', () => {
     it('should delete a global config node and return confirmation', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
+      } as any);
       vi.mocked(mockClient.getFlows).mockResolvedValue({
         rev: 'rev1',
-        flows: [
-          { id: 'tab1', type: 'tab', label: 'Flow 1' },
-          { id: 'cfg1', type: 'mqtt-broker', name: 'My Broker' },
-        ],
+        flows: [{ id: 'tab1', type: 'tab', label: 'Flow 1' }],
       } as any);
-      vi.mocked(mockClient.putFlows).mockResolvedValue(undefined);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
 
       const result = await deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' });
 
-      expect(mockClient.putFlows).toHaveBeenCalledWith(
-        expect.objectContaining({
-          flows: [expect.objectContaining({ id: 'tab1' })],
-        }),
-        'nodes'
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+        expect.objectContaining({ configs: [] })
       );
       expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'cfg1' });
     });
 
     it('should throw when node not found', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({ rev: 'rev1', flows: [] } as any);
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [],
+      } as any);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'missing' })).rejects.toThrow(
         'not found'
       );
     });
 
-    it('should throw when node has a z property', async () => {
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'cfg1', type: 'mqtt-broker', z: 'tab1' }],
-      } as any);
-
-      await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(
-        'z property'
-      );
-    });
-
     it('should throw when node is referenced by another node', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
+      } as any);
       vi.mocked(mockClient.getFlows).mockResolvedValue({
         rev: 'rev1',
-        flows: [
-          { id: 'cfg1', type: 'mqtt-broker' },
-          { id: 'node1', type: 'mqtt in', z: 'tab1', broker: 'cfg1' },
-        ],
+        flows: [{ id: 'node1', type: 'mqtt in', z: 'tab1', broker: 'cfg1' }],
       } as any);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(

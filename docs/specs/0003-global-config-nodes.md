@@ -10,71 +10,57 @@ Node-RED has two kinds of config nodes:
 
 **Flow-scoped config nodes** have a `z` property pointing to their parent tab. They are created and deleted via `POST /flow` and `PUT /flow/:id` as part of the flow's `configs` array. The existing `create_flow` and `update_flow` tools handle these correctly.
 
-**Global config nodes** have no `z` property. They live in the flat flows array at the top level, accessible from any flow. Examples: `mqtt-broker`, `tls-config`, `credentials`. The Node-RED editor creates and deletes them via `PUT /flows` (full deploy), which is the only Admin API endpoint that can modify the top-level flows array directly.
+**Global config nodes** have no `z` property. They are accessible from any flow and stored in the `configs` array of the global flow object (`GET`/`PUT /flow/global`). Examples: `mqtt-broker`, `tls-config`, `credentials`.
 
 The existing flow tools cannot create or remove global config nodes. This means agents setting up multi-flow workflows that share infrastructure — e.g. multiple MQTT flows pointing to the same broker config — have no way to manage that shared config through MCP.
 
 ## Goals
 
-- Add `create_global_config_node` — append a new global config node to the flows array
+- Add `create_global_config_node` — append a new global config node to the global flow's `configs`
 - Add `update_global_config_node` — replace an existing global config node by ID
 - Add `delete_global_config_node` — remove a global config node, with a reference check
-- Expose a safe, scoped surface over `PUT /flows` without giving agents the ability to wipe all flows
 - Error clearly when flow-scoped nodes (those with `z`) are passed to these tools
 
 ## Non-Goals
 
-- **Bulk flow replacement** — `PUT /flows` is used internally with `Node-RED-Deployment-Type: nodes`, but is never exposed as a raw tool. Agents cannot replace all flows at once.
+- **Bulk flow replacement** — these tools make targeted changes to `globalFlow.configs` only; all other flows and subflows are untouched.
 - **Flow-scoped config node management** — already handled by `create_flow` / `update_flow` via the `configs` array. These tools reject any node that has a `z` property.
 - **Config node validation** — type-specific field validation (e.g. checking that `host` is present on an `mqtt-broker` node) is not performed. Node-RED will reject invalid nodes on deploy.
 
 ## Design
 
-### Client Layer Extension (`src/client.ts`)
+### Client Layer
 
-A single new method wraps `PUT /flows` with the `Node-RED-Deployment-Type: nodes` header. This deployment type tells Node-RED to only redeploy nodes that have changed, rather than restarting everything.
-
-```typescript
-async putFlows(
-  flowsData: NodeRedFlowsResponse,
-  deploymentType: 'full' | 'flows' | 'nodes' = 'full'
-): Promise<void> {
-  // PUT /flows with Node-RED-Deployment-Type header
-  // Body: {rev: "...", flows: [...]}
-  // Response: 200 or 204 (body consumed but ignored — rev is taken from getFlows)
-}
-```
+No new client methods are needed. Global config nodes are stored in the `configs` array of the global flow object, managed via the existing `getGlobalFlow` / `updateGlobalFlow` methods (which use `GET`/`PUT /flow/global`) already added for subflow support.
 
 All three tools use the same read-modify-write pattern:
-1. `client.getFlows()` — fetch current `{rev, flows}`
-2. Modify the flows array (add / replace / remove)
-3. `client.putFlows({rev, flows: modified}, 'nodes')` — deploy
+1. `client.getGlobalFlow()` — fetch `{id: 'global', configs: [...], subflows: [...]}`
+2. Modify the `configs` array (add / replace / remove)
+3. `client.updateGlobalFlow({...globalFlow, configs: modified})` — deploy
 
-The `rev` from step 1 is passed back in step 3 for optimistic locking.
+The `delete` tool additionally calls `client.getFlows()` to check for references across all tab flows before removing the node.
 
 ### Tool Implementations (`src/tools/`)
 
 **`create-global-config-node.ts`**
 - Parses `node` JSON string, validates with `NodeRedNodeSchema`
 - Errors if `node.z` is defined (flow-scoped — use flow tools)
-- Errors if a node with that `id` already exists in the flows array
-- Appends to flows array and calls `putFlows`
+- Calls `getGlobalFlow`, errors if a node with that `id` already exists in `configs`
+- Appends to `configs` and calls `updateGlobalFlow`
 - Returns `{id}`
 
 **`update-global-config-node.ts`**
 - Parses `nodeId` and `node` JSON string, validates replacement with `NodeRedNodeSchema`
 - Errors if replacement has `z` (would make it flow-scoped)
-- Finds existing node by `nodeId`, errors if not found
-- Errors if existing node has `z` (flow-scoped — use flow tools)
-- Replaces the node in the flows array and calls `putFlows`
+- Calls `getGlobalFlow`, errors if `nodeId` not found in `configs`
+- Replaces the node in `configs` and calls `updateGlobalFlow`
 - Returns `{id}`
 
 **`delete-global-config-node.ts`**
 - Parses `nodeId`
-- Finds node by `nodeId`, errors if not found
-- Errors if existing node has `z` (flow-scoped — use flow tools)
-- Scans all other nodes for any property value equal to `nodeId` (including array properties); errors if referenced
-- Removes the node and calls `putFlows`
+- Calls `getGlobalFlow`, errors if `nodeId` not found in `configs`
+- Calls `getFlows` to scan all tab flows; errors if any node has a property value equal to `nodeId`
+- Removes the node from `configs` and calls `updateGlobalFlow`
 - Returns `{deleted: nodeId}`
 
 ### Reference Check (delete)
@@ -89,9 +75,9 @@ Three new entries in `ListToolsRequestSchema` and three new `case` branches in `
 
 | Tool Name | Description | Input Schema |
 |---|---|---|
-| `create_global_config_node` | Create a new global config node accessible from all flows. Uses `PUT /flows` with `Node-RED-Deployment-Type: nodes`. | `{node: string}` |
-| `update_global_config_node` | Replace an existing global config node by ID. Uses `PUT /flows` with `Node-RED-Deployment-Type: nodes`. | `{nodeId: string, node: string}` |
-| `delete_global_config_node` | Delete a global config node. Errors if still referenced by other nodes. Uses `PUT /flows` with `Node-RED-Deployment-Type: nodes`. | `{nodeId: string}` |
+| `create_global_config_node` | Create a new global config node accessible from all flows. Uses `PUT /flow/global`. | `{node: string}` |
+| `update_global_config_node` | Replace an existing global config node by ID. Uses `PUT /flow/global`. | `{nodeId: string, node: string}` |
+| `delete_global_config_node` | Delete a global config node. Errors if still referenced by other nodes. Uses `PUT /flow/global`. | `{nodeId: string}` |
 
 All three tools error (via the standard MCP error response) when:
 - The node (or the node found by `nodeId`) has a `z` property
@@ -105,12 +91,11 @@ Tests follow the existing pattern with a mocked `NodeRedClient`.
 
 **Tool tests** (`tests/tools.test.ts`):
 - `createGlobalConfigNode`: success, duplicate id error, z property error, invalid JSON
-- `updateGlobalConfigNode`: success, not found error, existing node has z error, replacement has z error, invalid JSON
-- `deleteGlobalConfigNode`: success, not found error, z property error, referenced node error
+- `updateGlobalConfigNode`: success, not found error, replacement has z error, invalid JSON
+- `deleteGlobalConfigNode`: success, not found error, referenced node error
 
 ## Tasks
 
-- [x] Add `putFlows(flowsData, deploymentType)` method to `src/client.ts`
 - [x] Create `src/tools/create-global-config-node.ts`
 - [x] Create `src/tools/update-global-config-node.ts`
 - [x] Create `src/tools/delete-global-config-node.ts`
@@ -119,6 +104,6 @@ Tests follow the existing pattern with a mocked `NodeRedClient`.
 
 ## References
 
-- [Node-RED Admin API: PUT /flows](https://nodered.org/docs/api/admin/methods/put/flows/) — full flows deployment endpoint
-- [Node-RED Deployment Types](https://nodered.org/docs/api/admin/methods/put/flows/) — `full`, `flows`, `nodes` deployment type semantics
+- [Node-RED Admin API: GET /flow/:id](https://nodered.org/docs/api/admin/methods/get/flow/) — global flow endpoint (`/flow/global`)
+- [Node-RED Admin API: PUT /flow/:id](https://nodered.org/docs/api/admin/methods/put/flow/) — global flow update endpoint (`/flow/global`)
 - [Node-RED Config Nodes](https://nodered.org/docs/creating-nodes/config-nodes) — how config nodes work and the z property convention

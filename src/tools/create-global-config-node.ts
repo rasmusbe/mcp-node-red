@@ -26,13 +26,14 @@ export async function createGlobalConfigNode(client: NodeRedClient, args: unknow
     );
   }
 
-  const flowsResponse = await client.getFlows();
+  const globalFlow = await client.getGlobalFlow();
+  const configs = globalFlow.configs ?? [];
 
-  if (flowsResponse.flows.some((f) => f.id === validated.id)) {
+  if (configs.some((c) => c.id === validated.id)) {
     throw new Error(`Node with id "${validated.id}" already exists`);
   }
 
-  await client.putFlows({ ...flowsResponse, flows: [...flowsResponse.flows, validated] }, 'nodes');
+  await client.updateGlobalFlow({ ...globalFlow, configs: [...configs, validated] });
 
   return {
     content: [

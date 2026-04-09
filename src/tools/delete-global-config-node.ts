@@ -22,29 +22,24 @@ function isReferencedBy(flows: NodeRedItem[], nodeId: string): boolean {
 export async function deleteGlobalConfigNode(client: NodeRedClient, args: unknown) {
   const parsed = DeleteGlobalConfigNodeArgsSchema.parse(args);
 
-  const flowsResponse = await client.getFlows();
+  const globalFlow = await client.getGlobalFlow();
+  const configs = globalFlow.configs ?? [];
 
-  const existing = flowsResponse.flows.find((f) => f.id === parsed.nodeId);
-  if (!existing) {
+  if (!configs.some((c) => c.id === parsed.nodeId)) {
     throw new Error(`Node with id "${parsed.nodeId}" not found`);
   }
 
-  const existingZ = (existing as Record<string, unknown>).z;
-  if (existingZ !== undefined) {
-    throw new Error(
-      `Node "${parsed.nodeId}" has a z property and is flow-scoped — use the flow tools to delete it`
-    );
-  }
-
+  const flowsResponse = await client.getFlows();
   if (isReferencedBy(flowsResponse.flows, parsed.nodeId)) {
     throw new Error(
       `Node "${parsed.nodeId}" is still referenced by other nodes and cannot be deleted`
     );
   }
 
-  const updatedFlows = flowsResponse.flows.filter((f) => f.id !== parsed.nodeId);
-
-  await client.putFlows({ ...flowsResponse, flows: updatedFlows }, 'nodes');
+  await client.updateGlobalFlow({
+    ...globalFlow,
+    configs: configs.filter((c) => c.id !== parsed.nodeId),
+  });
 
   return {
     content: [

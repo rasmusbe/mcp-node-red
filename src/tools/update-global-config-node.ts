@@ -27,23 +27,17 @@ export async function updateGlobalConfigNode(client: NodeRedClient, args: unknow
     );
   }
 
-  const flowsResponse = await client.getFlows();
+  const globalFlow = await client.getGlobalFlow();
+  const configs = globalFlow.configs ?? [];
 
-  const existing = flowsResponse.flows.find((f) => f.id === parsed.nodeId);
-  if (!existing) {
+  if (!configs.some((c) => c.id === parsed.nodeId)) {
     throw new Error(`Node with id "${parsed.nodeId}" not found`);
   }
 
-  const existingZ = (existing as Record<string, unknown>).z;
-  if (existingZ !== undefined) {
-    throw new Error(
-      `Node "${parsed.nodeId}" has a z property and is flow-scoped — use the flow tools to update it`
-    );
-  }
-
-  const updatedFlows = flowsResponse.flows.map((f) => (f.id === parsed.nodeId ? validated : f));
-
-  await client.putFlows({ ...flowsResponse, flows: updatedFlows }, 'nodes');
+  await client.updateGlobalFlow({
+    ...globalFlow,
+    configs: configs.map((c) => (c.id === parsed.nodeId ? validated : c)),
+  });
 
   return {
     content: [
