@@ -122,6 +122,20 @@ export class NodeRedClient {
     return data as { id: string };
   }
 
+  async getFlow(flowId: string): Promise<unknown> {
+    const response = await request(`${this.baseUrl}/flow/${flowId}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (response.statusCode !== 200) {
+      const body = await response.body.text();
+      throw new Error(`Failed to get flow: ${response.statusCode}\n${body}`);
+    }
+
+    return await response.body.json();
+  }
+
   async getGlobalFlow(): Promise<NodeRedGlobalFlowResponse> {
     const response = await request(`${this.baseUrl}/flow/global`, {
       method: 'GET',

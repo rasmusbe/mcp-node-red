@@ -13,12 +13,13 @@ import { deleteSubflow } from './tools/delete-subflow.js';
 import { getContext } from './tools/get-context.js';
 import { getDiagnostics } from './tools/get-diagnostics.js';
 import { getFlowState } from './tools/get-flow-state.js';
-import { getFlows } from './tools/get-flows.js';
+import { getFlow } from './tools/get-flow.js';
 import { getNodeHelp } from './tools/get-node-help.js';
 import { getNodes } from './tools/get-nodes.js';
 import { getSettings } from './tools/get-settings.js';
 import { getSubflows } from './tools/get-subflows.js';
 import { installNode } from './tools/install-node.js';
+import { listFlows } from './tools/list-flows.js';
 import { removeNodeModule } from './tools/remove-node-module.js';
 import { setDebugState } from './tools/set-debug-state.js';
 import { setFlowState } from './tools/set-flow-state.js';
@@ -59,12 +60,27 @@ export function createServer() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: 'get_flows',
+        name: 'list_flows',
         description:
-          'Get all flows from Node-RED instance. Returns current flows configuration including revision number.',
+          'List all flow tabs from Node-RED. Returns a compact list with id, label, and type for each tab. Use this before get_flow to discover available flow IDs.',
         inputSchema: {
           type: 'object',
           properties: {},
+        },
+      },
+      {
+        name: 'get_flow',
+        description:
+          'Get a single flow tab by ID from Node-RED. Returns the full configuration including all nodes and config nodes for that flow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: {
+              type: 'string',
+              description: 'ID of the flow tab to retrieve',
+            },
+          },
+          required: ['flowId'],
         },
       },
       {
@@ -467,8 +483,10 @@ export function createServer() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       switch (request.params.name) {
-        case 'get_flows':
-          return await getFlows(client);
+        case 'list_flows':
+          return await listFlows(client);
+        case 'get_flow':
+          return await getFlow(client, request.params.arguments);
         case 'create_flow':
           return await createFlow(client, request.params.arguments);
         case 'update_flow':

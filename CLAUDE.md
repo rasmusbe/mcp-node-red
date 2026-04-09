@@ -57,7 +57,7 @@ npm run format
 - Each tool is a standalone async function
 - Takes `NodeRedClient` instance and tool arguments
 - Returns MCP tool response format: `{ content: [{ type: 'text', text: '...' }] }`
-- Flow management: `get-flows.ts`, `create-flow.ts` (POST /flow), `update-flow.ts` (PUT /flow/:id), `validate-flow.ts`, `delete-flow.ts` (DELETE /flow/:id)
+- Flow management: `list-flows.ts` (GET /flows, tabs only), `get-flow.ts` (GET /flow/:id), `create-flow.ts` (POST /flow), `update-flow.ts` (PUT /flow/:id), `validate-flow.ts`, `delete-flow.ts` (DELETE /flow/:id)
 - Runtime control: `get-flow-state.ts` (GET /flows/state), `set-flow-state.ts` (POST /flows/state)
 - Node modules: `get-nodes.ts` (GET /nodes), `install-node.ts` (POST /nodes), `set-node-module-state.ts` (PUT /nodes/:module), `remove-node-module.ts` (DELETE /nodes/:module)
 - Context store: `get-context.ts` (GET /context/:scope), `delete-context.ts` (DELETE /context/:scope/:id/:key)
@@ -203,7 +203,7 @@ The MCP server uses `PUT /flow/:id` which:
 
 - NEVER use `curl` to call Node-RED API directly
 - NEVER use Bash to make HTTP requests to Node-RED
-- ALWAYS use the MCP tools: `get_flows`, `create_flow`, `update_flow`, `validate_flow`, `delete_flow`, `get_flow_state`, `set_flow_state`, `get_nodes`, `install_node`, `set_node_module_state`, `remove_node_module`, `get_context`, `delete_context`, `get_settings`, `get_diagnostics`, `trigger_inject`, `set_debug_state`
+- ALWAYS use the MCP tools: `list_flows`, `get_flow`, `create_flow`, `update_flow`, `validate_flow`, `delete_flow`, `get_flow_state`, `set_flow_state`, `get_nodes`, `install_node`, `set_node_module_state`, `remove_node_module`, `get_context`, `delete_context`, `get_settings`, `get_diagnostics`, `trigger_inject`, `set_debug_state`
 
 The entire purpose of this MCP server is to provide safe, validated access to Node-RED through MCP tools. Bypassing them defeats the purpose and removes safety checks.
 

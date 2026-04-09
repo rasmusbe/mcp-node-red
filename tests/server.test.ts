@@ -56,12 +56,14 @@ describe('MCP Server', () => {
     const { tools } = await client.listTools();
     const toolNames = tools.map((t) => t.name);
 
-    expect(toolNames).toContain('get_flows');
+    expect(toolNames).toContain('list_flows');
+    expect(toolNames).toContain('get_flow');
     expect(toolNames).toContain('create_flow');
     expect(toolNames).toContain('update_flow');
     expect(toolNames).toContain('validate_flow');
     expect(toolNames).toContain('delete_flow');
     expect(toolNames).toContain('get_node_help');
+    expect(toolNames).not.toContain('get_flows');
 
     await client.close();
     await server.close();

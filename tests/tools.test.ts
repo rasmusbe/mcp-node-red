@@ -8,10 +8,11 @@ import { deleteGlobalConfigNode } from '../src/tools/delete-global-config-node.j
 import { deleteSubflow } from '../src/tools/delete-subflow.js';
 import { getContext } from '../src/tools/get-context.js';
 import { getFlowState } from '../src/tools/get-flow-state.js';
-import { getFlows } from '../src/tools/get-flows.js';
+import { getFlow } from '../src/tools/get-flow.js';
 import { getNodes } from '../src/tools/get-nodes.js';
 import { getSubflows } from '../src/tools/get-subflows.js';
 import { installNode } from '../src/tools/install-node.js';
+import { listFlows } from '../src/tools/list-flows.js';
 import { removeNodeModule } from '../src/tools/remove-node-module.js';
 import { setDebugState } from '../src/tools/set-debug-state.js';
 import { setFlowState } from '../src/tools/set-flow-state.js';
@@ -28,6 +29,7 @@ describe('Tool Handlers', () => {
   beforeEach(() => {
     mockClient = {
       getFlows: vi.fn(),
+      getFlow: vi.fn(),
       getContext: vi.fn(),
       deleteContext: vi.fn(),
       updateFlow: vi.fn(),
@@ -46,44 +48,70 @@ describe('Tool Handlers', () => {
     } as any;
   });
 
-  describe('getFlows', () => {
-    it('should return formatted flows', async () => {
-      const mockFlowsData = {
-        rev: 'abc123',
-        flows: [{ id: '1', type: 'tab', label: 'Flow 1' }],
-      };
-
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData);
-
-      const result = await getFlows(mockClient);
-
-      expect(result.content).toHaveLength(1);
-      expect(result.content[0].type).toBe('text');
-      expect(JSON.parse(result.content[0].text)).toEqual(mockFlowsData);
-    });
-
-    it('should return flows including subflows', async () => {
+  describe('listFlows', () => {
+    it('should return only tab items with id, label, type', async () => {
       const mockFlowsData = {
         rev: 'abc123',
         flows: [
           { id: '1', type: 'tab', label: 'Flow 1' },
-          {
-            id: 'sf1',
-            type: 'subflow',
-            name: 'My Subflow',
-            in: [{ wires: [{ id: 'n1', port: 0 }] }],
-            out: [{ wires: [{ id: 'n2', port: 0 }] }],
-            nodes: [{ id: 'n1', type: 'function', z: 'sf1' }],
-          },
+          { id: '2', type: 'tab', label: 'Flow 2' },
+          { id: 'n1', type: 'inject', z: '1' },
         ],
       };
 
       vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData as any);
 
-      const result = await getFlows(mockClient);
+      const result = await listFlows(mockClient);
 
       expect(result.content).toHaveLength(1);
-      expect(JSON.parse(result.content[0].text)).toEqual(mockFlowsData);
+      expect(result.content[0].type).toBe('text');
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toEqual([
+        { id: '1', label: 'Flow 1', type: 'tab' },
+        { id: '2', label: 'Flow 2', type: 'tab' },
+      ]);
+    });
+
+    it('should filter out subflows and nodes', async () => {
+      const mockFlowsData = {
+        rev: 'abc123',
+        flows: [
+          { id: '1', type: 'tab', label: 'My Flow' },
+          { id: 'sf1', type: 'subflow', name: 'My Subflow' },
+        ],
+      };
+
+      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData as any);
+
+      const result = await listFlows(mockClient);
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].id).toBe('1');
+    });
+  });
+
+  describe('getFlow', () => {
+    it('should return a single flow by ID', async () => {
+      const mockFlow = {
+        id: 'flow1',
+        label: 'My Flow',
+        nodes: [{ id: 'n1', type: 'inject', z: 'flow1' }],
+        configs: [],
+      };
+
+      vi.mocked(mockClient.getFlow).mockResolvedValue(mockFlow);
+
+      const result = await getFlow(mockClient, { flowId: 'flow1' });
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe('text');
+      expect(JSON.parse(result.content[0].text)).toEqual(mockFlow);
+      expect(mockClient.getFlow).toHaveBeenCalledWith('flow1');
+    });
+
+    it('should throw when flowId is missing', async () => {
+      await expect(getFlow(mockClient, {})).rejects.toThrow();
     });
   });
 
