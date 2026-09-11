@@ -60,6 +60,13 @@ export const NodeRedFlowsResponseSchema = z.object({
 });
 
 /**
+ * POST /flows answers with the revision it saved, which is what the next write has to send back.
+ */
+export const SetFlowsResponseSchema = z.object({
+  rev: z.string(),
+});
+
+/**
  * Just enough of GET /flows to list the tabs. Every other schema here passes unknown keys
  * through, which makes Zod walk each of the several hundred nodes in a real deployment; this one
  * strips them instead, because a tab listing never looks at a node.
@@ -185,6 +192,7 @@ export type NodeRedSubflow = z.infer<typeof NodeRedSubflowSchema>;
 export type NodeRedItem = z.infer<typeof NodeRedItemSchema>;
 export type NodeRedGlobalFlowResponse = z.infer<typeof NodeRedGlobalFlowResponseSchema>;
 export type NodeRedFlowsResponse = z.infer<typeof NodeRedFlowsResponseSchema>;
+export type SetFlowsResponse = z.infer<typeof SetFlowsResponseSchema>;
 export interface FlowTab {
   id: string;
   label: string;

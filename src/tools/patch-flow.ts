@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
-import type { NodeRedConfig, NodeRedNode } from '../schemas.js';
+import type { NodeRedConfig, NodeRedNode, UpdateFlowRequest } from '../schemas.js';
 import {
   FlowResponseSchema,
   NodeRedConfigSchema,
@@ -10,6 +10,12 @@ import {
 import { textResult } from './result.js';
 
 const NodePatchSchema = z.object({ id: z.string() }).passthrough();
+
+/** GET /flow/:id as Node-RED sent it, before any schema filled the lists in. */
+interface RawFlow extends Record<string, unknown> {
+  nodes?: NodeRedNode[];
+  configs?: NodeRedConfig[];
+}
 
 const PatchFlowArgsSchema = z.object({
   flowId: z.string(),
@@ -72,9 +78,14 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     );
   }
 
-  const flow = FlowResponseSchema.parse(await client.getFlow(flowId));
-  let nodes: NodeRedNode[] = [...flow.nodes];
-  let configs: NodeRedConfig[] = [...flow.configs];
+  // Validate what Node-RED sent, but keep working from the object itself: Zod's passthrough emits
+  // the keys a schema declares before the rest, so a parsed copy of a node has its wires ahead of
+  // its coordinates and the write would rewrite the key order of every node in the tab. Node-RED
+  // omits both lists when a flow has none, and the schema's defaults no longer stand in.
+  const flow = (await client.getFlow(flowId)) as RawFlow;
+  FlowResponseSchema.parse(flow);
+  let nodes: NodeRedNode[] = [...(flow.nodes ?? [])];
+  let configs: NodeRedConfig[] = [...(flow.configs ?? [])];
 
   const removed = new Set<string>();
   for (const id of removeNodeIds) {
@@ -125,9 +136,7 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     configs.push({ ...config, z: typeof config.z === 'string' ? config.z : flowId });
   }
 
-  // PUT /flow/:id replaces the flow with what is sent, so validate the merged result rather than
-  // the patch: a write that Node-RED cannot read back leaves the tab unusable in the editor.
-  const merged = UpdateFlowRequestSchema.parse({
+  const merged = {
     ...flow,
     id: flowId,
     ...(parsed.label !== undefined ? { label: parsed.label } : {}),
@@ -135,7 +144,12 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     ...(parsed.info !== undefined ? { info: parsed.info } : {}),
     nodes,
     configs,
-  });
+  } as UpdateFlowRequest;
+
+  // PUT /flow/:id replaces the flow with what is sent, so validate the merged result rather than
+  // the patch: a write that Node-RED cannot read back leaves the tab unusable in the editor. Only
+  // the check is wanted here, for the same key order reason as the read above.
+  UpdateFlowRequestSchema.parse(merged);
 
   await client.updateFlow(flowId, merged);
 

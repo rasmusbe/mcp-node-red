@@ -47,9 +47,18 @@ describe('Tool Handlers', () => {
       triggerInject: vi.fn(),
       setDebugNodeState: vi.fn(),
       getGlobalFlow: vi.fn(),
-      updateGlobalFlow: vi.fn(),
+      setFlows: vi.fn(),
     } as any;
   });
+
+  /** The flat GET /flows list the six subflow and config node tools read and write back. */
+  const givenFlows = (flows: unknown[], rev = 'rev1') => {
+    vi.mocked(mockClient.getFlows).mockResolvedValue({ rev, flows } as any);
+    vi.mocked(mockClient.setFlows).mockResolvedValue({ rev: 'rev2' });
+  };
+
+  const postedFlows = () => vi.mocked(mockClient.setFlows).mock.calls[0]?.[0];
+  const postedRev = () => vi.mocked(mockClient.setFlows).mock.calls[0]?.[1];
 
   describe('listFlows', () => {
     it('should return id and label for each tab', async () => {
@@ -996,35 +1005,56 @@ describe('Tool Handlers', () => {
   });
 
   describe('createSubflow', () => {
-    it('should create a subflow and return its id', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+    const tab = { id: 'tab1', type: 'tab', label: 'Flow 1' };
+
+    it('should append the definition and its contents as flat items', async () => {
+      givenFlows([tab]);
 
       const result = await createSubflow(mockClient, {
-        subflow: JSON.stringify({ id: 'sf1', type: 'subflow', name: 'My Subflow', nodes: [] }),
+        subflow: JSON.stringify({
+          id: 'sf1',
+          type: 'subflow',
+          name: 'My Subflow',
+          nodes: [{ id: 'n1', type: 'function', x: 10, y: 20 }],
+          configs: [{ id: 'c1', type: 'mqtt-broker' }],
+        }),
       });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subflows: expect.arrayContaining([
-            expect.objectContaining({ id: 'sf1', name: 'My Subflow' }),
-          ]),
-        })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1' });
+      expect(postedFlows()).toEqual([
+        tab,
+        { id: 'sf1', type: 'subflow', name: 'My Subflow' },
+        { id: 'n1', type: 'function', x: 10, y: 20, z: 'sf1' },
+        { id: 'c1', type: 'mqtt-broker', z: 'sf1' },
+      ]);
+      expect(postedRev()).toBe('rev1');
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1', rev: 'rev2' });
     });
 
     it('should throw when subflow id already exists', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'Existing' }],
-      } as any);
+      givenFlows([{ id: 'sf1', type: 'subflow', name: 'Existing' }]);
 
       await expect(
         createSubflow(mockClient, {
           subflow: JSON.stringify({ id: 'sf1', type: 'subflow', name: 'Duplicate', nodes: [] }),
         })
       ).rejects.toThrow('already exists');
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
+    });
+
+    it('should throw when an inner node reuses an id from another flow', async () => {
+      givenFlows([tab, { id: 'n1', type: 'inject', z: 'tab1', x: 1, y: 2 }]);
+
+      await expect(
+        createSubflow(mockClient, {
+          subflow: JSON.stringify({
+            id: 'sf1',
+            type: 'subflow',
+            name: 'My Subflow',
+            nodes: [{ id: 'n1', type: 'function', x: 10, y: 20 }],
+          }),
+        })
+      ).rejects.toThrow('Node with id "n1" already exists in the configuration');
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
 
     it('should throw on invalid JSON', async () => {
@@ -1035,28 +1065,72 @@ describe('Tool Handlers', () => {
   });
 
   describe('updateSubflow', () => {
-    it('should update a subflow and return its id', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
-      } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+    const definition = { id: 'sf1', type: 'subflow', name: 'Old Name' };
+    const innerNode = { id: 'n1', type: 'function', z: 'sf1', x: 10, y: 20 };
+    const innerConfig = { id: 'c1', type: 'mqtt-broker', z: 'sf1' };
+    const otherNode = { id: 'n2', type: 'inject', z: 'tab1', x: 1, y: 2 };
+
+    it('should merge the update and leave the contents alone', async () => {
+      givenFlows([definition, innerNode, innerConfig, otherNode]);
 
       const result = await updateSubflow(mockClient, {
         subflowId: 'sf1',
         updates: JSON.stringify({ name: 'New Name' }),
       });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subflows: [expect.objectContaining({ id: 'sf1', name: 'New Name' })],
-        })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1' });
+      expect(postedFlows()).toEqual([
+        { id: 'sf1', type: 'subflow', name: 'New Name' },
+        innerNode,
+        innerConfig,
+        otherNode,
+      ]);
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'sf1', rev: 'rev2' });
+    });
+
+    it('should replace the inner nodes when the update sends them', async () => {
+      givenFlows([definition, innerNode, innerConfig, otherNode]);
+
+      await updateSubflow(mockClient, {
+        subflowId: 'sf1',
+        updates: JSON.stringify({ nodes: [{ id: 'n3', type: 'delay', x: 30, y: 40 }] }),
+      });
+
+      expect(postedFlows()).toEqual([
+        definition,
+        innerConfig,
+        otherNode,
+        { id: 'n3', type: 'delay', x: 30, y: 40, z: 'sf1' },
+      ]);
+    });
+
+    it('should replace the inner config nodes when the update sends them', async () => {
+      givenFlows([definition, innerNode, innerConfig]);
+
+      await updateSubflow(mockClient, {
+        subflowId: 'sf1',
+        updates: JSON.stringify({ configs: [{ id: 'c2', type: 'mqtt-broker' }] }),
+      });
+
+      expect(postedFlows()).toEqual([
+        definition,
+        innerNode,
+        { id: 'c2', type: 'mqtt-broker', z: 'sf1' },
+      ]);
+    });
+
+    it('should empty the contents when the update sends an empty list', async () => {
+      givenFlows([definition, innerNode, innerConfig]);
+
+      await updateSubflow(mockClient, {
+        subflowId: 'sf1',
+        updates: JSON.stringify({ nodes: [], configs: [] }),
+      });
+
+      expect(postedFlows()).toEqual([definition]);
     });
 
     it('should throw when subflow not found', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
+      givenFlows([{ id: 'tab1', type: 'tab', label: 'Flow 1' }]);
 
       await expect(
         updateSubflow(mockClient, { subflowId: 'missing', updates: JSON.stringify({ name: 'X' }) })
@@ -1064,56 +1138,47 @@ describe('Tool Handlers', () => {
     });
 
     it('should reject an update that would break the subflow definition', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
-      } as any);
+      givenFlows([definition]);
 
       await expect(
         updateSubflow(mockClient, { subflowId: 'sf1', updates: JSON.stringify({ name: 42 }) })
       ).rejects.toThrow();
-      expect(mockClient.updateGlobalFlow).not.toHaveBeenCalled();
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
 
     it('should not let an update change id or type', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
-      } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+      givenFlows([definition]);
 
       await updateSubflow(mockClient, {
         subflowId: 'sf1',
         updates: JSON.stringify({ id: 'other', type: 'tab', name: 'New Name' }),
       });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subflows: [{ id: 'sf1', type: 'subflow', name: 'New Name', nodes: [] }],
-        })
-      );
+      expect(postedFlows()).toEqual([{ id: 'sf1', type: 'subflow', name: 'New Name' }]);
     });
   });
 
   describe('deleteSubflow', () => {
-    it('should delete a subflow and return confirmation', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow' }],
-      } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
-      vi.mocked(mockClient.getFlows).mockResolvedValue({ rev: 'r1', flows: [] });
+    const definition = { id: 'sf1', type: 'subflow', name: 'My Subflow' };
+    const tab = { id: 'tab1', type: 'tab', label: 'Flow 1' };
+
+    it('should delete the definition and everything inside it', async () => {
+      givenFlows([
+        tab,
+        definition,
+        { id: 'n1', type: 'function', z: 'sf1', x: 10, y: 20 },
+        { id: 'c1', type: 'mqtt-broker', z: 'sf1' },
+        { id: 'n2', type: 'inject', z: 'tab1', x: 1, y: 2 },
+      ]);
 
       const result = await deleteSubflow(mockClient, { subflowId: 'sf1' });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({ subflows: [] })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'sf1' });
+      expect(postedFlows()).toEqual([tab, { id: 'n2', type: 'inject', z: 'tab1', x: 1, y: 2 }]);
+      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'sf1', rev: 'rev2' });
     });
 
     it('should throw when subflow not found', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global', subflows: [] } as any);
+      givenFlows([tab]);
 
       await expect(deleteSubflow(mockClient, { subflowId: 'missing' })).rejects.toThrow(
         'not found'
@@ -1121,57 +1186,38 @@ describe('Tool Handlers', () => {
     });
 
     it('should refuse to delete a subflow that still has instances', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow' }],
-      } as any);
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'r1',
-        flows: [
-          { id: 'tab1', type: 'tab', label: 'Flow 1' },
-          { id: 'n1', type: 'subflow:sf1', z: 'tab1' },
-        ],
-      } as any);
+      givenFlows([tab, definition, { id: 'n1', type: 'subflow:sf1', z: 'tab1', x: 1, y: 2 }]);
 
       await expect(deleteSubflow(mockClient, { subflowId: 'sf1' })).rejects.toThrow(
         'still used by 1 instance node(s) (n1)'
       );
-      expect(mockClient.updateGlobalFlow).not.toHaveBeenCalled();
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
   });
 
   describe('createGlobalConfigNode', () => {
-    const mockGlobalFlow = { id: 'global', configs: [], subflows: [] };
+    const tab = { id: 'tab1', type: 'tab', label: 'Flow 1' };
 
-    it('should create a global config node and return its id', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(mockGlobalFlow as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+    it('should append the node to the configuration', async () => {
+      givenFlows([tab]);
 
       const result = await createGlobalConfigNode(mockClient, {
         node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker', name: 'My Broker' }),
       });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          configs: expect.arrayContaining([
-            expect.objectContaining({ id: 'cfg1', type: 'mqtt-broker' }),
-          ]),
-        })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1' });
+      expect(postedFlows()).toEqual([tab, { id: 'cfg1', type: 'mqtt-broker', name: 'My Broker' }]);
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1', rev: 'rev2' });
     });
 
-    it('should throw when node id already exists', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
-      } as any);
+    it('should throw when the id is taken anywhere in the configuration', async () => {
+      givenFlows([{ id: 'cfg1', type: 'inject', z: 'tab1', x: 1, y: 2 }]);
 
       await expect(
         createGlobalConfigNode(mockClient, {
           node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker' }),
         })
       ).rejects.toThrow('already exists');
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
 
     it('should throw when node has a z property', async () => {
@@ -1190,31 +1236,26 @@ describe('Tool Handlers', () => {
   });
 
   describe('updateGlobalConfigNode', () => {
-    it('should update a global config node and return its id', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [{ id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' }],
-      } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+    const tab = { id: 'tab1', type: 'tab', label: 'Flow 1' };
+
+    it('should replace the node where it stands', async () => {
+      givenFlows([tab, { id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' }, tab]);
 
       const result = await updateGlobalConfigNode(mockClient, {
         nodeId: 'cfg1',
         node: JSON.stringify({ id: 'cfg1', type: 'mqtt-broker', name: 'New Broker' }),
       });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          configs: [expect.objectContaining({ id: 'cfg1', name: 'New Broker' })],
-        })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1' });
+      expect(postedFlows()).toEqual([
+        tab,
+        { id: 'cfg1', type: 'mqtt-broker', name: 'New Broker' },
+        tab,
+      ]);
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'cfg1', rev: 'rev2' });
     });
 
     it('should throw when node not found', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [],
-      } as any);
+      givenFlows([tab]);
 
       await expect(
         updateGlobalConfigNode(mockClient, {
@@ -1222,6 +1263,18 @@ describe('Tool Handlers', () => {
           node: JSON.stringify({ id: 'missing', type: 'mqtt-broker' }),
         })
       ).rejects.toThrow('not found');
+    });
+
+    it('should not treat a tab or a subflow definition as a global config node', async () => {
+      givenFlows([tab, { id: 'sf1', type: 'subflow', name: 'My Subflow' }]);
+
+      await expect(
+        updateGlobalConfigNode(mockClient, {
+          nodeId: 'sf1',
+          node: JSON.stringify({ id: 'sf1', type: 'mqtt-broker' }),
+        })
+      ).rejects.toThrow('not found');
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
 
     it('should throw when replacement has a z property', async () => {
@@ -1241,30 +1294,19 @@ describe('Tool Handlers', () => {
   });
 
   describe('deleteGlobalConfigNode', () => {
-    it('should delete a global config node and return confirmation', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
-      } as any);
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'tab1', type: 'tab', label: 'Flow 1' }],
-      } as any);
-      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+    const tab = { id: 'tab1', type: 'tab', label: 'Flow 1' };
+
+    it('should remove the node from the configuration', async () => {
+      givenFlows([tab, { id: 'cfg1', type: 'mqtt-broker' }]);
 
       const result = await deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' });
 
-      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-        expect.objectContaining({ configs: [] })
-      );
-      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'cfg1' });
+      expect(postedFlows()).toEqual([tab]);
+      expect(JSON.parse(result.content[0].text)).toEqual({ deleted: 'cfg1', rev: 'rev2' });
     });
 
     it('should throw when node not found', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [],
-      } as any);
+      givenFlows([tab]);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'missing' })).rejects.toThrow(
         'not found'
@@ -1272,36 +1314,29 @@ describe('Tool Handlers', () => {
     });
 
     it('should throw when node is referenced by another node', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
-      } as any);
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [{ id: 'node1', type: 'mqtt in', z: 'tab1', broker: 'cfg1' }],
-      } as any);
+      givenFlows([
+        { id: 'cfg1', type: 'mqtt-broker' },
+        { id: 'node1', type: 'mqtt in', z: 'tab1', x: 1, y: 2, broker: 'cfg1' },
+      ]);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(
         'still referenced'
       );
+      expect(mockClient.setFlows).not.toHaveBeenCalled();
     });
 
     it('should throw when the reference is nested inside another property', async () => {
-      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
-        id: 'global',
-        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
-      } as any);
-      vi.mocked(mockClient.getFlows).mockResolvedValue({
-        rev: 'rev1',
-        flows: [
-          {
-            id: 'node1',
-            type: 'ui_template',
-            z: 'tab1',
-            rules: [{ property: 'broker', value: { ref: 'cfg1' } }],
-          },
-        ],
-      } as any);
+      givenFlows([
+        { id: 'cfg1', type: 'mqtt-broker' },
+        {
+          id: 'node1',
+          type: 'ui_template',
+          z: 'tab1',
+          x: 1,
+          y: 2,
+          rules: [{ property: 'broker', value: { ref: 'cfg1' } }],
+        },
+      ]);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(
         'still referenced'
@@ -1310,11 +1345,10 @@ describe('Tool Handlers', () => {
   });
 
   describe('object and JSON string parameters', () => {
-    const globalFlow = {
-      id: 'global',
-      configs: [{ id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' }],
-      subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
-    };
+    const flatFlows = [
+      { id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' },
+      { id: 'sf1', type: 'subflow', name: 'Old Name' },
+    ];
 
     const cases = [
       {
@@ -1367,60 +1401,48 @@ describe('Tool Handlers', () => {
         name: 'create_subflow',
         value: { id: 'sf2', type: 'subflow', name: 'My Subflow', nodes: [] },
         setup: () => {
-          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
-          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+          givenFlows(flatFlows);
         },
         run: (subflow: unknown) => createSubflow(mockClient, { subflow }),
         expectCall: () =>
-          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-            expect.objectContaining({
-              subflows: expect.arrayContaining([expect.objectContaining({ id: 'sf2' })]),
-            })
+          expect(postedFlows()).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'sf2', type: 'subflow' })])
           ),
       },
       {
         name: 'update_subflow',
         value: { name: 'New Name' },
         setup: () => {
-          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
-          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+          givenFlows(flatFlows);
         },
         run: (updates: unknown) => updateSubflow(mockClient, { subflowId: 'sf1', updates }),
         expectCall: () =>
-          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-            expect.objectContaining({
-              subflows: [expect.objectContaining({ id: 'sf1', name: 'New Name' })],
-            })
+          expect(postedFlows()).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'sf1', name: 'New Name' })])
           ),
       },
       {
         name: 'create_global_config_node',
         value: { id: 'cfg2', type: 'mqtt-broker', name: 'My Broker' },
         setup: () => {
-          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
-          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+          givenFlows(flatFlows);
         },
         run: (node: unknown) => createGlobalConfigNode(mockClient, { node }),
         expectCall: () =>
-          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-            expect.objectContaining({
-              configs: expect.arrayContaining([expect.objectContaining({ id: 'cfg2' })]),
-            })
+          expect(postedFlows()).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'cfg2' })])
           ),
       },
       {
         name: 'update_global_config_node',
         value: { id: 'cfg1', type: 'mqtt-broker', name: 'New Broker' },
         setup: () => {
-          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
-          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+          givenFlows(flatFlows);
         },
         run: (node: unknown) => updateGlobalConfigNode(mockClient, { nodeId: 'cfg1', node }),
         expectCall: () =>
-          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
-            expect.objectContaining({
-              configs: [expect.objectContaining({ id: 'cfg1', name: 'New Broker' })],
-            })
+          expect(postedFlows()).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: 'cfg1', name: 'New Broker' })])
           ),
       },
     ];

@@ -9,6 +9,7 @@ import type {
   NodeRedDiagnostics,
   NodeRedFlowsResponse,
   NodeRedGlobalFlowResponse,
+  NodeRedItem,
   NodeRedSettings,
   NodeSet,
   UpdateFlowRequest,
@@ -22,6 +23,7 @@ import {
   NodeRedGlobalFlowResponseSchema,
   NodeRedSettingsSchema,
   NodeSetSchema,
+  SetFlowsResponseSchema,
 } from './schemas.js';
 
 /** Give up on an unreachable host quickly: nothing here is worth a long connect wait. */
@@ -157,6 +159,25 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The deploy modes Node-RED accepts in Node-RED-Deployment-Type. "nodes" restarts only the nodes
+ * the deploy actually changed, "flows" every node of a changed tab, "full" everything, and
+ * "reload" discards the body and re-reads the stored flows.
+ */
+export type DeploymentType = 'full' | 'nodes' | 'flows' | 'reload';
+
+/** Said when the 409 body carries nothing better, which is the usual case. */
+const CONFLICT_MESSAGE = 'The Node-RED configuration changed since it was read';
+
+/**
+ * A POST /flows that Node-RED refused because the configuration moved on. The runtime compares
+ * the rev in the body against the one it holds and answers 409 version_mismatch, and that is the
+ * one write failure a caller can act on: read again and reapply, rather than report an error.
+ */
+export class FlowsConflictError extends Error {
+  readonly name = 'FlowsConflictError';
+}
+
 export class NodeRedClient {
   private readonly baseUrl: string;
   private readonly token?: string;
@@ -259,8 +280,58 @@ export class NodeRedClient {
       await this.fail('get flows', response);
     }
 
+    // Validate the response, but hand back the JSON exactly as Node-RED sent it. setFlows writes
+    // this list back, and Zod's passthrough emits the keys a schema declares before the rest, so
+    // a parsed copy would move every node's wires ahead of its coordinates and rewrite the key
+    // order of the whole of flows.json for anyone who keeps it in git.
     const data = await response.body.json();
-    return NodeRedFlowsResponseSchema.parse(data);
+    NodeRedFlowsResponseSchema.parse(data);
+    return data as NodeRedFlowsResponse;
+  }
+
+  /**
+   * Replace the whole configuration, under the revision it was read at.
+   *
+   * The rev is what makes this safe: Node-RED compares it against the revision it holds and
+   * answers 409 instead of taking a write built on a configuration someone has since deployed
+   * over. The default deployment type is the editor's own, "nodes", which restarts only the
+   * nodes that actually changed rather than every flow.
+   */
+  async setFlows(
+    flows: NodeRedItem[],
+    rev: string,
+    deploymentType: DeploymentType = 'nodes'
+  ): Promise<{ rev: string }> {
+    const headers = this.getHeaders();
+    headers['Node-RED-Deployment-Type'] = deploymentType;
+
+    const response = await this.send(`${this.baseUrl}/flows`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ rev, flows }),
+    });
+
+    if (response.statusCode === 409) {
+      throw await this.conflict(response);
+    }
+
+    if (response.statusCode !== 200) {
+      await this.fail('set flows', response);
+    }
+
+    return SetFlowsResponseSchema.parse(await response.body.json());
+  }
+
+  private async conflict(response: HttpResponse): Promise<FlowsConflictError> {
+    let body = '';
+    try {
+      body = (await response.body.text()) ?? '';
+    } catch {
+      // The status already said what happened; the body only adds detail.
+    }
+
+    const message = jsonErrorMessage(body.trim());
+    return new FlowsConflictError(message && message.length > 0 ? message : CONFLICT_MESSAGE);
   }
 
   /**
@@ -356,24 +427,6 @@ export class NodeRedClient {
 
     const data = await response.body.json();
     return NodeRedGlobalFlowResponseSchema.parse(data);
-  }
-
-  async updateGlobalFlow(flowData: NodeRedGlobalFlowResponse): Promise<{ id: string }> {
-    const response = await this.send(`${this.baseUrl}/flow/global`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(flowData),
-    });
-
-    if (response.statusCode !== 200 && response.statusCode !== 204) {
-      await this.fail('update global flow', response);
-    }
-
-    if (response.statusCode === 204) {
-      return { id: 'global' };
-    }
-    const data = await response.body.json();
-    return data as { id: string };
   }
 
   async deleteFlow(flowId: string): Promise<void> {

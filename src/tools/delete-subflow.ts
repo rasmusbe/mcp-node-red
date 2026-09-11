@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import type { NodeRedItem } from '../schemas.js';
+import { modifyFlows, ownerId } from './global-flow.js';
 import { textResult } from './result.js';
 
 const DeleteSubflowArgsSchema = z.object({
@@ -19,30 +20,23 @@ function findInstances(flows: NodeRedItem[], subflowId: string): string[] {
 export async function deleteSubflow(client: NodeRedClient, args: unknown) {
   const parsed = DeleteSubflowArgsSchema.parse(args);
 
-  // Both reads are needed either way, and neither depends on the other.
-  const [globalFlow, flowsResponse] = await Promise.all([
-    client.getGlobalFlow(),
-    client.getFlows(),
-  ]);
-  const subflows = globalFlow.subflows ?? [];
+  const { rev } = await modifyFlows(client, (flows) => {
+    if (!flows.some((item) => item.id === parsed.subflowId && item.type === 'subflow')) {
+      throw new Error(`Subflow with id "${parsed.subflowId}" not found`);
+    }
 
-  if (!subflows.some((s) => s.id === parsed.subflowId)) {
-    throw new Error(`Subflow with id "${parsed.subflowId}" not found`);
-  }
+    const instances = findInstances(flows, parsed.subflowId);
+    if (instances.length > 0) {
+      throw new Error(
+        `Subflow "${parsed.subflowId}" is still used by ${instances.length} instance node(s) (${instances.join(', ')}). Remove them first.`
+      );
+    }
 
-  const instances = findInstances(flowsResponse.flows, parsed.subflowId);
-  if (instances.length > 0) {
-    throw new Error(
-      `Subflow "${parsed.subflowId}" is still used by ${instances.length} instance node(s) (${instances.join(', ')}). Remove them first.`
+    // The nodes inside the subflow have no other owner, so they go with the definition.
+    return flows.filter(
+      (item) => item.id !== parsed.subflowId && ownerId(item) !== parsed.subflowId
     );
-  }
+  });
 
-  const updated = {
-    ...globalFlow,
-    subflows: subflows.filter((s) => s.id !== parsed.subflowId),
-  };
-
-  await client.updateGlobalFlow(updated);
-
-  return textResult({ deleted: parsed.subflowId });
+  return textResult({ deleted: parsed.subflowId, rev });
 }

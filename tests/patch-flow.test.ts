@@ -43,6 +43,16 @@ describe('patchFlow', () => {
     });
   });
 
+  it('should keep the key order Node-RED sent for untouched nodes', async () => {
+    // A parsed copy of the flow would emit the keys the schema declares first, so every node in
+    // the tab would come back to flows.json reordered for a one node change.
+    await patchFlow(mockClient, { flowId: 'flow1', label: 'Renamed' });
+
+    const untouched = written().nodes.find((n: any) => n.id === 'n1');
+    expect(Object.keys(untouched)).toEqual(['id', 'type', 'z', 'name', 'x', 'y', 'wires']);
+    expect(Object.keys(written())).toEqual(['id', 'label', 'nodes', 'configs']);
+  });
+
   it('should drop the g property of nodes whose group was removed', async () => {
     await patchFlow(mockClient, { flowId: 'flow1', removeNodeIds: ['g1'] });
 

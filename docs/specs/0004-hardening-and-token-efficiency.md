@@ -60,7 +60,7 @@ deploy answers 409 instead of being overwritten. Hiding `get_flow_state` and `se
 when `runtimeState` is disabled was considered and declined: it saves about 700 characters per
 session and makes startup depend on Node-RED answering.
 
-- [ ] Optimistic locking with `rev` for global flow writes (subflow and global config node tools)
+- [x] Optimistic locking with `rev` for global flow writes (subflow and global config node tools)
 
 ## Design (batch 1)
 
@@ -240,6 +240,65 @@ characters. A dialog field that is not in `defaults` is dropped, because Node-RE
 it; a registration with neither `defaults` nor `credentials` is no answer at all and the dialog
 list is used as before.
 
+## Design (batch 6)
+
+**What the Node-RED source says.** `editor-api/lib/admin/flows.js` reads the API version from
+`Node-RED-API-Version` (default v1, must match `/^v[12]$/`) and the deploy mode from
+`Node-RED-Deployment-Type` (default `full`); for v2 and any mode but `reload` it passes the
+request body through untouched, so the body is `{rev, flows}`, and it answers the runtime result
+with `res.json(result)`, which is 200 with `{rev}`. v1 answers 204 and takes a bare array instead.
+`runtime/lib/api/flows.js` `setFlows` runs under a mutex, and when the body has a `rev` it
+compares it against `runtime.flows.getFlows().rev` and throws an error with `code:
+"version_mismatch"` and `status: 409`; the error is built with `new Error()` and no message, so
+`rejectHandler` in `editor-api/lib/util.js` falls back to `err.toString()` and the 409 body reads
+`{"code":"version_mismatch","message":"Error"}`. The four deploy modes are `full`, `nodes`,
+`flows` and `reload`; `reload` is handled in the API layer and discards the body, the other three
+reach `runtime/lib/flows/index.js` `setFlows`, where `full` restarts everything and the others
+restart against the computed diff.
+
+**Credentials survive the round trip.** `runtime/lib/flows/index.js` calls
+`credentials.clean(config)` when a deploy carries no credentials object, and `clean` in
+`runtime/lib/nodes/credentials.js` only drops cached credentials for ids that are *not* in the
+posted configuration, extracting the credentials of nodes that do carry them. So posting back the
+nodes read from `GET /flows`, which never includes credentials, keeps every stored credential as
+long as the node id is still in the list. That is what makes a whole-configuration write safe
+here.
+
+**The flat model.** `GET /flows` is one flat array: tabs (`type: "tab"`), subflow definitions
+(`type: "subflow"`, without nested `nodes`/`configs`), every node with a `z` naming its tab or
+subflow, and global config nodes with no `z` at all. `GET /flow/global` is the nested view of the
+same data and stays the read side of `get_subflows` and `validate_flow`; the six writing tools now
+work on the flat list, because that is what `POST /flows` takes. Splitting a subflow's contents
+back into `nodes` and `configs` follows Node-RED's own rule from `parseConfig` in
+`runtime/lib/flows/util.js`: an item with both `x` and `y` is a node, anything else is a config
+node. A global config node is an item with no `z` that is not itself a tab or a subflow
+definition.
+
+**One write path.** `modifyFlows` in `src/tools/global-flow.ts` reads `GET /flows`, hands the
+list to a `mutate` callback and posts the result with the rev it read. A 409 comes back as
+`FlowsConflictError` from the client, and the helper re-reads and re-applies once, which is why
+`mutate` has to be a pure function of the list it is given; a second conflict is reported rather
+than forced, and an error thrown by `mutate` itself (not found, already exists, still referenced)
+is passed through and not retried. The deployment type is `nodes`, the editor's own default, so
+only the nodes that actually changed restart.
+
+**What it costs.** The whole configuration goes over the wire on every write, about 500 KB on the
+measured instance, against the previous `PUT /flow/global` which sent only the global scope. That
+is the price of the lock, and it was accepted.
+
+**Key order is preserved on the way through.** Zod's `.passthrough()` emits the keys a schema
+declares before the rest, so a parsed copy of a node has its `wires` ahead of its `x` and `y`.
+Writing parsed copies back would have rewritten the key order of every item in flows.json on
+every call, which is nothing to Node-RED but a whole-file diff for anyone keeping flows.json in
+git. Every path that reads JSON and writes it back now validates with the schema and passes on
+the object it was given: `client.getFlows`, which `modifyFlows` writes back in full; the read and
+the merged body in `patch_flow`, where the schema's `nodes`/`configs` defaults no longer stand in
+and the two lists are read with `?? []`; the definition and the replacement lists in
+`update_subflow`; and the objects `update_flow` and `update_global_config_node` are handed. The
+tools still write parsed copies where the item is new (`create_flow`, `create_subflow`,
+`create_global_config_node`), since there is no stored order to keep. `listTabs` parses a
+stripping schema, and nothing writes its result back.
+
 ## References
 
 - [Node-RED Admin API: POST /flow](https://nodered.org/docs/api/admin/methods/post/flow/) - id is
@@ -251,3 +310,11 @@ list is used as before.
   `headersTimeout`, `bodyTimeout`, `signal`
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) -
   `RequestHandlerExtra.signal` on request handlers
+- [`@node-red/editor-api/lib/admin/flows.js`](https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/editor-api/lib/admin/flows.js) -
+  API version and deployment type headers, v2 request and response shapes
+- [`@node-red/runtime/lib/api/flows.js`](https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/runtime/lib/api/flows.js) -
+  the `rev` comparison and the 409 `version_mismatch`
+- [`@node-red/runtime/lib/flows/util.js`](https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/runtime/lib/flows/util.js) -
+  `parseConfig`, which splits a container's items into nodes and configs on `x`/`y`
+- [`@node-red/runtime/lib/nodes/credentials.js`](https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/runtime/lib/nodes/credentials.js) -
+  `clean`, which keeps the credentials of every node still present in the posted configuration

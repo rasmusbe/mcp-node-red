@@ -166,9 +166,10 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 - **update_global_config_node**: Replace a global config node
 - **delete_global_config_node**: Remove a global config node, refused while it is referenced
 
-These seven rewrite the global flow through `PUT /flow/global`, which replaces every global
-config node and subflow with what is sent. A deploy from the editor in the same moment can be
-overwritten.
+The six writing tools deploy through `POST /flows` with the revision the configuration was read
+at, so a deploy from the editor in between is refused by Node-RED instead of overwritten. The
+change is then reapplied to the fresh configuration once; a second conflict is reported and
+nothing is written.
 
 ### Runtime Control
 - **get_flow_state**: Get runtime state of flows (started/stopped)
@@ -241,6 +242,8 @@ Get the Node-RED runtime settings and version
 
 - **Individual flow updates**: Uses PUT /flow/:id to update only the specified flow
 - **No accidental deletions**: Other flows remain completely untouched
+- **Optimistic locking**: Subflow and global config node writes carry the revision they read, so a
+  concurrent editor deploy is detected and retried once instead of overwritten
 - **Validation**: All flow configurations are validated before sending to Node-RED
 - **Read-only by default**: Only modifies flows when explicitly requested
 - **Module management guards**: Core modules cannot be removed; enable/disable is reversible

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import type { NodeRedItem } from '../schemas.js';
+import { isGlobalConfigNode, modifyFlows } from './global-flow.js';
 import { textResult } from './result.js';
 
 const DeleteGlobalConfigNodeArgsSchema = z.object({
@@ -40,27 +41,19 @@ function isReferencedBy(flows: NodeRedItem[], nodeId: string): boolean {
 export async function deleteGlobalConfigNode(client: NodeRedClient, args: unknown) {
   const parsed = DeleteGlobalConfigNodeArgsSchema.parse(args);
 
-  // Both reads are needed either way, and neither depends on the other.
-  const [globalFlow, flowsResponse] = await Promise.all([
-    client.getGlobalFlow(),
-    client.getFlows(),
-  ]);
-  const configs = globalFlow.configs ?? [];
+  const { rev } = await modifyFlows(client, (flows) => {
+    if (!flows.some((item) => item.id === parsed.nodeId && isGlobalConfigNode(item))) {
+      throw new Error(`Node with id "${parsed.nodeId}" not found`);
+    }
 
-  if (!configs.some((c) => c.id === parsed.nodeId)) {
-    throw new Error(`Node with id "${parsed.nodeId}" not found`);
-  }
+    if (isReferencedBy(flows, parsed.nodeId)) {
+      throw new Error(
+        `Node "${parsed.nodeId}" is still referenced by other nodes and cannot be deleted`
+      );
+    }
 
-  if (isReferencedBy(flowsResponse.flows, parsed.nodeId)) {
-    throw new Error(
-      `Node "${parsed.nodeId}" is still referenced by other nodes and cannot be deleted`
-    );
-  }
-
-  await client.updateGlobalFlow({
-    ...globalFlow,
-    configs: configs.filter((c) => c.id !== parsed.nodeId),
+    return flows.filter((item) => item.id !== parsed.nodeId);
   });
 
-  return textResult({ deleted: parsed.nodeId });
+  return textResult({ deleted: parsed.nodeId, rev });
 }

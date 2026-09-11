@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BODY_TIMEOUT_MS,
   CONNECT_TIMEOUT_MS,
+  FlowsConflictError,
   HEADERS_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   NODE_SET_CACHE_TTL_MS,
@@ -137,6 +138,25 @@ describe('NodeRedClient', () => {
           'Node-RED-API-Version': 'v2',
         },
       });
+    });
+  });
+
+  describe('getFlows key order', () => {
+    it('should hand back the flows exactly as Node-RED sent them', async () => {
+      // setFlows writes this list back, and Zod's passthrough would emit wires ahead of x and y.
+      const mockFlows = {
+        rev: 'abc123',
+        flows: [{ id: 'n1', type: 'inject', x: 100, y: 80, wires: [[]], z: 'tab1' }],
+      };
+
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue(mockFlows), text: vi.fn() },
+      } as any);
+
+      const result = await client.getFlows();
+
+      expect(Object.keys(result.flows[0])).toEqual(['id', 'type', 'x', 'y', 'wires', 'z']);
     });
   });
 
@@ -1308,49 +1328,77 @@ describe('NodeRedClient', () => {
     });
   });
 
-  describe('updateGlobalFlow', () => {
-    it('should PUT the global flow and return id', async () => {
+  describe('setFlows', () => {
+    const flows = [{ id: 'cfg1', type: 'mqtt-broker' }];
+
+    const respond = (statusCode: number, body: unknown) => {
       vi.mocked(request).mockResolvedValue({
-        statusCode: 200,
+        statusCode,
         body: {
-          json: vi.fn().mockResolvedValue({ id: 'global' }),
-          text: vi.fn(),
+          json: vi.fn().mockResolvedValue(body),
+          text: vi.fn().mockResolvedValue(typeof body === 'string' ? body : JSON.stringify(body)),
         },
       } as any);
+    };
 
-      const globalFlow = { id: 'global' as const, configs: [], subflows: [] };
-      const result = await client.updateGlobalFlow(globalFlow);
+    it('should post the rev, the flows and the deployment type', async () => {
+      respond(200, { rev: 'rev2' });
 
-      expect(result).toEqual({ id: 'global' });
-      expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/global', {
-        method: 'PUT',
+      const result = await client.setFlows(flows, 'rev1');
+
+      expect(result).toEqual({ rev: 'rev2' });
+      expect(request).toHaveBeenCalledWith('http://localhost:1880/flows', {
+        method: 'POST',
         dispatcher: nodeRedAgent,
-        headers: expect.objectContaining({ 'Node-RED-API-Version': 'v2' }),
-        body: JSON.stringify(globalFlow),
+        headers: expect.objectContaining({
+          'Node-RED-API-Version': 'v2',
+          'Node-RED-Deployment-Type': 'nodes',
+        }),
+        body: JSON.stringify({ rev: 'rev1', flows }),
       });
     });
 
-    it('should return {id: "global"} on 204 response', async () => {
-      vi.mocked(request).mockResolvedValue({
-        statusCode: 204,
-        body: { text: vi.fn(), json: vi.fn() },
-      } as any);
+    it('should send the deployment type it is given', async () => {
+      respond(200, { rev: 'rev2' });
 
-      const result = await client.updateGlobalFlow({ id: 'global' as const });
-      expect(result).toEqual({ id: 'global' });
-    });
+      await client.setFlows(flows, 'rev1', 'full');
 
-    it('should throw on error response', async () => {
-      vi.mocked(request).mockResolvedValue({
-        statusCode: 400,
-        body: { text: vi.fn().mockResolvedValue('Bad Request') },
-      } as any);
-
-      await expect(client.updateGlobalFlow({ id: 'global' as const })).rejects.toThrow(
-        'Failed to update global flow: 400'
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/flows',
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'Node-RED-Deployment-Type': 'full' }),
+        })
       );
     });
+
+    it('should throw a FlowsConflictError with the body message on 409', async () => {
+      respond(409, { code: 'version_mismatch', message: 'Flows have changed' });
+
+      const error = await client.setFlows(flows, 'stale').catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(FlowsConflictError);
+      expect((error as Error).name).toBe('FlowsConflictError');
+      expect((error as Error).message).toBe('Flows have changed');
+    });
+
+    it('should describe the conflict itself when the 409 body carries no message', async () => {
+      respond(409, '');
+
+      await expect(client.setFlows(flows, 'stale')).rejects.toThrow(
+        'The Node-RED configuration changed since it was read'
+      );
+    });
+
+    it('should throw on any other error status', async () => {
+      respond(400, 'Bad Request');
+
+      const error = await client.setFlows(flows, 'rev1').catch((caught: unknown) => caught);
+
+      expect(error).not.toBeInstanceOf(FlowsConflictError);
+      expect((error as Error).message).toContain('Failed to set flows: 400');
+    });
   });
+
   describe('request options', () => {
     it('should cap the undici timeouts, which default to 300 s', () => {
       expect(agentOptions).toEqual({

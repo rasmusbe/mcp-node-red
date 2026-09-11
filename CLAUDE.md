@@ -75,7 +75,7 @@ npm run format
 
 **Stdio Transport**: Uses stdin/stdout for MCP communication, not HTTP. Server runs as child process.
 
-**API v2 with Optimistic Locking**: Uses `rev` field in responses to prevent conflicts.
+**API v2 with Optimistic Locking**: Subflow and global config node writes go through POST /flows with the `rev` from GET /flows, so a concurrent editor deploy answers 409 instead of being overwritten; `modifyFlows` in `src/tools/global-flow.ts` retries once on the fresh configuration. Flow tabs still use PUT /flow/:id, which needs no `rev` because it only touches the one flow.
 
 **Authentication Flexibility**: Supports both Bearer tokens (standalone Node-RED) and Basic auth (Home Assistant add-on).
 
@@ -95,6 +95,13 @@ npm run format
 - Request: `{id, label, nodes: [], configs: []}`
 - Response: 200 or 204 with `{id: "..."}` in body
 - Flow ID is optional - auto-generated if not provided
+
+**POST /flows**:
+- Replaces the whole configuration: `{rev, flows: [...]}` with the `rev` from GET /flows
+- Header `Node-RED-Deployment-Type`: `full`, `nodes` (default here), `flows` or `reload`
+- Response: 200 with `{rev: "..."}`, the revision to send with the next write
+- 409 `{code: "version_mismatch"}` when the `rev` no longer matches, so nothing is overwritten
+- Nodes posted without a `credentials` property keep their stored credentials
 
 **PUT /flow/:id**:
 - Updates a single flow by ID

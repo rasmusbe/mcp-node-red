@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
-import { NodeRedNodeSchema } from '../schemas.js';
+import { type NodeRedItem, NodeRedNodeSchema } from '../schemas.js';
+import { isGlobalConfigNode, modifyFlows } from './global-flow.js';
 import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
@@ -22,17 +23,17 @@ export async function updateGlobalConfigNode(client: NodeRedClient, args: unknow
     );
   }
 
-  const globalFlow = await client.getGlobalFlow();
-  const configs = globalFlow.configs ?? [];
+  const { rev } = await modifyFlows(client, (flows) => {
+    const current = flows.find((item) => item.id === parsed.nodeId && isGlobalConfigNode(item));
 
-  if (!configs.some((c) => c.id === parsed.nodeId)) {
-    throw new Error(`Node with id "${parsed.nodeId}" not found`);
-  }
+    if (!current) {
+      throw new Error(`Node with id "${parsed.nodeId}" not found`);
+    }
 
-  await client.updateGlobalFlow({
-    ...globalFlow,
-    configs: configs.map((c) => (c.id === parsed.nodeId ? validated : c)),
+    // The replacement is written as the caller sent it: Zod's passthrough emits the keys it
+    // declares before the rest, so the parsed copy would land in flows.json reordered.
+    return flows.map((item) => (item === current ? (nodeData as NodeRedItem) : item));
   });
 
-  return textResult({ id: validated.id });
+  return textResult({ id: validated.id, rev });
 }

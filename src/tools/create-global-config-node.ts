@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedNodeSchema } from '../schemas.js';
+import { modifyFlows } from './global-flow.js';
 import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
@@ -21,14 +22,14 @@ export async function createGlobalConfigNode(client: NodeRedClient, args: unknow
     );
   }
 
-  const globalFlow = await client.getGlobalFlow();
-  const configs = globalFlow.configs ?? [];
+  const { rev } = await modifyFlows(client, (flows) => {
+    // Ids are unique across the whole configuration, so a clash with any item is a clash.
+    if (flows.some((item) => item.id === validated.id)) {
+      throw new Error(`Node with id "${validated.id}" already exists`);
+    }
 
-  if (configs.some((c) => c.id === validated.id)) {
-    throw new Error(`Node with id "${validated.id}" already exists`);
-  }
+    return [...flows, validated];
+  });
 
-  await client.updateGlobalFlow({ ...globalFlow, configs: [...configs, validated] });
-
-  return textResult({ id: validated.id });
+  return textResult({ id: validated.id, rev });
 }

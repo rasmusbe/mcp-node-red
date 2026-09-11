@@ -241,7 +241,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'create_subflow',
         description:
-          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -257,7 +257,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'update_subflow',
         description:
-          'Update an existing subflow definition by ID. Fields in "updates" are merged into the existing definition; id and type cannot be changed. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Update an existing subflow definition by ID. Fields in "updates" are merged into the existing definition; id and type cannot be changed. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -277,7 +277,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'delete_subflow',
         description:
-          'Delete a subflow definition from Node-RED by ID. Errors if any flow still contains an instance of the subflow. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Delete a subflow definition from Node-RED by ID. Errors if any flow still contains an instance of the subflow. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -292,7 +292,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'create_global_config_node',
         description:
-          'Create a new global config node (no z property) accessible from all flows. Errors if a node with that id already exists or if the node contains a z property. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Create a new global config node (no z property) accessible from all flows. Errors if a node with that id already exists or if the node contains a z property. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -308,7 +308,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'update_global_config_node',
         description:
-          'Update an existing global config node by replacing it. Errors if the node does not exist or if the replacement contains a z property. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Update an existing global config node by replacing it. Errors if the node does not exist or if the replacement contains a z property. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -328,7 +328,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'delete_global_config_node',
         description:
-          'Delete a global config node by ID. Errors if the node does not exist or is still referenced by other nodes. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
+          'Delete a global config node by ID. Errors if the node does not exist or is still referenced by other nodes. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
         inputSchema: {
           type: 'object',
           properties: {
