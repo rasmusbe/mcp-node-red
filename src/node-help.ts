@@ -1,6 +1,10 @@
+import { decodeEntities } from './html-to-markdown.js';
+
 export interface NodeHelp {
   type: string;
   help: string;
+  /** Node-RED accepts help written as markdown as well as the usual HTML. */
+  format: 'html' | 'markdown';
 }
 
 /**
@@ -10,15 +14,21 @@ export interface NodeHelp {
  * `<script type="text/html" data-help-name="<node type>">`. Content inside a `<script>`
  * element cannot contain the string `</script`, so matching up to the next closing tag is
  * exact here rather than an attempt at parsing HTML with a regex. Attribute order and quote
- * style vary between core nodes and contrib nodes, hence the loose tag match.
+ * style vary between core nodes and contrib nodes, hence the loose tag match. The script's own
+ * `type` says which syntax the block is written in.
  */
 export function extractNodeHelp(configHtml: string): NodeHelp[] {
   const helpBlock =
-    /<script\b[^>]*\bdata-help-name\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/script\s*>/gi;
+    /<script\b([^>]*\bdata-help-name\s*=\s*(["'])(.*?)\2[^>]*)>([\s\S]*?)<\/script\s*>/gi;
 
   const blocks: NodeHelp[] = [];
   for (const match of configHtml.matchAll(helpBlock)) {
-    blocks.push({ type: match[2], help: match[3].trim() });
+    const markdown = attribute(match[1], 'type')?.trim().toLowerCase() === 'text/markdown';
+    blocks.push({
+      type: match[3],
+      help: match[4].trim(),
+      format: markdown ? 'markdown' : 'html',
+    });
   }
   return blocks;
 }
@@ -150,15 +160,4 @@ function htmlToText(html: string): string {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
   ).trim();
-}
-
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
 }

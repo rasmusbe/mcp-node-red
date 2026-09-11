@@ -50,8 +50,8 @@ the network or the caller misbehaves, and how much of the context window a call 
 
 ### Batch 5, get_node_help
 
-- [ ] Help HTML rendered as markdown
-- [ ] Configurable properties read from the node's `defaults` in `RED.nodes.registerType`
+- [x] Help HTML rendered as markdown
+- [x] Configurable properties read from the node's `defaults` in `RED.nodes.registerType`
 
 ### Batch 6, optimistic locking
 
@@ -200,6 +200,45 @@ provides, or when it is `subflow:<id>` for a subflow in the global flow. The nod
 from the cache and refetched once before a type is reported as missing, for the same reason
 `get_node_help` does. The flow id is optional here, because a `create_flow` payload has none yet,
 and the `z` check is skipped when there is no id to compare against.
+
+## Design (batch 5)
+
+**Help as markdown.** The help block was passed through as raw HTML: `api-call-service` from
+node-red-contrib-home-assistant-websocket is about 6,600 characters, a third of it tags and the
+`rel="noopener noreferrer"` that repeats on every link, and the same link appears seven times.
+`htmlToMarkdown` in `src/html-to-markdown.ts` is a scanner over the tags help actually uses, not
+an HTML parser, because help is a fragment written by the node author rather than a document:
+headings, paragraphs, lists, `dl` message properties, `pre` fences with the language from a
+`language-xxx` class, links, emphasis and code. A tag it does not know is dropped and its text
+kept, `script` and `style` go with their content, and nothing from the HTML is ever executed. An
+inline run is collected in a sink until its closing tag arrives, since the markdown for a link or
+a definition term can only be written once its text is complete; a sink counts the tags of its own
+name that open inside it, so a plain span nested in a `property-type` span does not close it
+early. Node-RED also accepts help written in markdown, in a
+`<script type="text/markdown" data-help-name>`; `extractNodeHelp` reports the script's `type` as
+`format` and such a block passes through with only trimming. `decodeEntities` moved into the new
+module, extended with the numeric `&#NNN;` and `&#xHH;` forms, so there is one copy.
+
+**Properties from `defaults`.** The property list came from the `<input>` and `<select>` ids in
+the edit dialog, which only sees the fields written as markup: for `api-call-service` that is 10
+properties against the roughly 20 the node stores, missing `action`, `floorId`, `areaId`,
+`deviceId`, `entityId`, `labelId`, `outputProperties`, `domain` and `service` because the editor
+renders them from JavaScript, and reporting `server` as `text` when it holds a config node id.
+The authority is the `defaults` object passed to `RED.nodes.registerType`, which Node-RED writes
+to the flow key for key, and it sits in the same config HTML. `extractNodeDefaults` in
+`src/node-defaults.ts` tokenizes the editor JavaScript, finds each `registerType` call, and reads
+the `defaults` and `credentials` objects with a recursive-descent parser for the object-literal
+subset: strings, numbers, booleans, `null`, `undefined`, arrays, nested objects, trailing commas
+and comments. Strings, template literals, comments and regular expressions are recognised only so
+that a brace or a comma inside one cannot be mistaken for structure. A value that is not a literal
+(`RED.validators.number()`, a function, `RED._("...")`, a template literal with a substitution) is
+stepped over as one balanced expression and yields `undefined`. Nothing is evaluated: there is no
+`vm`, no `eval`, no `new Function`. The tool then renders one line per property of `defaults`, in
+that order, with `config node "<type>"` where a type is declared, the dialog's input type, options,
+label, placeholder and description merged in by field id, and the default as JSON cut at 80
+characters. A dialog field that is not in `defaults` is dropped, because Node-RED does not save
+it; a registration with neither `defaults` nor `credentials` is no answer at all and the dialog
+list is used as before.
 
 ## References
 

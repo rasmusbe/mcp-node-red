@@ -11,7 +11,7 @@ describe('extractNodeHelp', () => {
 </script>`;
 
     expect(extractNodeHelp(html)).toEqual([
-      { type: 'inject', help: '<p>Injects a message into a flow.</p>' },
+      { type: 'inject', help: '<p>Injects a message into a flow.</p>', format: 'html' },
     ]);
   });
 
@@ -25,7 +25,21 @@ describe('extractNodeHelp', () => {
   it('should handle single quotes and reversed attribute order', () => {
     const html = `<script data-help-name='foo-node' type='text/x-red'><p>Help.</p></script>`;
 
-    expect(extractNodeHelp(html)).toEqual([{ type: 'foo-node', help: '<p>Help.</p>' }]);
+    expect(extractNodeHelp(html)).toEqual([
+      { type: 'foo-node', help: '<p>Help.</p>', format: 'html' },
+    ]);
+  });
+
+  it('should mark a help block written in markdown', () => {
+    const html = `<script type="text/markdown" data-help-name="big-timer">
+# Big Timer
+
+A *scheduler* node.
+</script>`;
+
+    expect(extractNodeHelp(html)).toEqual([
+      { type: 'big-timer', help: '# Big Timer\n\nA *scheduler* node.', format: 'markdown' },
+    ]);
   });
 
   it('should not treat the edit template as help', () => {

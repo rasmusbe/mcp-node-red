@@ -432,7 +432,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_node_help',
         description:
-          'Get the documentation for a node type: the same help shown in the Node-RED editor info sidebar. Pass "type" with a node type as it appears in a flow (e.g. "inject", "mqtt in") and it is resolved to its module and set, or pass "module" and "set" directly. Set "raw" to get the full node config HTML including the edit dialog and editor JavaScript.',
+          'Get the documentation for a node type as markdown, with the properties the node stores (from its editor definition) and their defaults. Pass "type" with a node type as it appears in a flow (e.g. "inject", "mqtt in") and it is resolved to its module and set, or pass "module" and "set" directly. Set "raw" to get the full node config HTML including the edit dialog and editor JavaScript.',
         inputSchema: {
           type: 'object',
           properties: {

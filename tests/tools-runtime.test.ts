@@ -76,9 +76,9 @@ describe('Runtime Info Tool Handlers', () => {
         [
           '## inject',
           '',
-          '<p>Injects a message into a flow.</p>',
+          'Injects a message into a flow.',
           '',
-          '### Configurable properties',
+          '### Properties',
           '',
           '- `name` (text)',
         ].join('\n')
@@ -142,7 +142,93 @@ describe('Runtime Info Tool Handlers', () => {
       );
 
       const result = await getNodeHelp(mockClient, { type: 'mqtt in' });
-      expect(result.content[0].text).toBe('## mqtt in\n\n<p>Subscribes.</p>');
+      expect(result.content[0].text).toBe('## mqtt in\n\nSubscribes.');
+    });
+
+    it('should list the properties the node stores, enriched by the edit dialog', async () => {
+      vi.mocked(
+        mockClient.getNodeConfig
+      ).mockResolvedValue(`<script type="text/html" data-template-name="api-call-service">
+<div class="form-row">
+  <label for="node-input-server">Server</label>
+  <input type="text" id="node-input-server">
+</div>
+<div class="form-row">
+  <label for="node-input-name">Name</label>
+  <input type="text" id="node-input-name" placeholder="My node">
+</div>
+<div class="form-row">
+  <select id="node-input-queue">
+    <option value="none">None</option>
+    <option value="first">First</option>
+  </select>
+</div>
+<input type="text" id="node-input-notSaved">
+</script>
+<script type="text/javascript">
+  RED.nodes.registerType('api-call-service', {
+    defaults: {
+      server: { value: '', type: 'server', required: true },
+      name: { value: '' },
+      queue: { value: 'none' },
+      outputProperties: {
+        value: [{ property: 'topic', propertyType: 'msg', value: 'topic', valueType: 'msg' }],
+      },
+      entityId: { value: [] },
+    },
+    credentials: { password: { type: 'password' } },
+  });
+</script>
+<script type="text/html" data-help-name="api-call-service"><p>Calls an action.</p></script>`);
+
+      const result = await getNodeHelp(mockClient, { module: 'ha', set: 'api-call-service' });
+
+      expect(result.content[0].text).toBe(
+        [
+          '## api-call-service',
+          '',
+          'Calls an action.',
+          '',
+          '### Properties',
+          '',
+          '- `server` (config node "server"; required; labelled "Server")',
+          '- `name` (text; labelled "Name"; example: My node)',
+          '- `queue` (select; one of: "none", "first"; default "none")',
+          '- `outputProperties` (default [{"property":"topic","propertyType":"msg","value":"topic","valueType":"msg"}])',
+          '- `entityId` (default [])',
+          '',
+          '### Credentials',
+          '',
+          '- `password` (password; set in the editor, not stored in the flow)',
+        ].join('\n')
+      );
+      expect(result.content[0].text).not.toContain('notSaved');
+    });
+
+    it('should cut a long default and leave an empty string out', async () => {
+      vi.mocked(mockClient.getNodeConfig).mockResolvedValue(`<script type="text/javascript">
+  RED.nodes.registerType('big', {
+    defaults: {
+      empty: { value: '' },
+      long: { value: '${'x'.repeat(120)}' },
+    },
+  });
+</script>
+<script type="text/html" data-help-name="big"><p>Big.</p></script>`);
+
+      const result = await getNodeHelp(mockClient, { module: 'm', set: 'big' });
+
+      expect(result.content[0].text).toContain('- `empty`\n');
+      expect(result.content[0].text).toContain(`- \`long\` (default "${'x'.repeat(79)}...)`);
+    });
+
+    it('should pass a help block written in markdown through untouched', async () => {
+      vi.mocked(mockClient.getNodeConfig).mockResolvedValue(
+        `<script type="text/markdown" data-help-name="timer">\n# Timer\n\nA *scheduler* node.\n</script>`
+      );
+
+      const result = await getNodeHelp(mockClient, { module: 'm', set: 'timer' });
+      expect(result.content[0].text).toBe('## timer\n\n# Timer\n\nA *scheduler* node.');
     });
 
     it('should return every help block when addressed by module and set', async () => {
