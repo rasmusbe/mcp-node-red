@@ -28,6 +28,15 @@ import {
  * %40: Express decodes them again, but Apache rejects encoded slashes by default and several
  * proxies rewrite them, so encode per segment instead and leave @ alone.
  */
+/**
+ * A flow id is a single path segment, so anything in it that would be read as structure has to
+ * be encoded. Without this an id like "../nodes" silently resolves to a different endpoint
+ * instead of failing.
+ */
+function encodeFlowId(value: string): string {
+  return encodeURIComponent(value);
+}
+
 function encodeNodePath(value: string): string {
   return value
     .split('/')
@@ -104,7 +113,7 @@ export class NodeRedClient {
   }
 
   async updateFlow(flowId: string, flowData: UpdateFlowRequest): Promise<{ id: string }> {
-    const response = await request(`${this.baseUrl}/flow/${flowId}`, {
+    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
       method: 'PUT',
       headers: this.getHeaders(),
       body: JSON.stringify(flowData),
@@ -123,7 +132,7 @@ export class NodeRedClient {
   }
 
   async getFlow(flowId: string): Promise<unknown> {
-    const response = await request(`${this.baseUrl}/flow/${flowId}`, {
+    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
       method: 'GET',
       headers: this.getHeaders(),
     });
@@ -171,7 +180,7 @@ export class NodeRedClient {
   }
 
   async deleteFlow(flowId: string): Promise<void> {
-    const response = await request(`${this.baseUrl}/flow/${flowId}`, {
+    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
     });

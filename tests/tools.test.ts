@@ -684,6 +684,37 @@ describe('Tool Handlers', () => {
         updateSubflow(mockClient, { subflowId: 'missing', updates: JSON.stringify({ name: 'X' }) })
       ).rejects.toThrow('not found');
     });
+
+    it('should reject an update that would break the subflow definition', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
+      } as any);
+
+      await expect(
+        updateSubflow(mockClient, { subflowId: 'sf1', updates: JSON.stringify({ name: 42 }) })
+      ).rejects.toThrow();
+      expect(mockClient.updateGlobalFlow).not.toHaveBeenCalled();
+    });
+
+    it('should not let an update change id or type', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
+      } as any);
+      vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+
+      await updateSubflow(mockClient, {
+        subflowId: 'sf1',
+        updates: JSON.stringify({ id: 'other', type: 'tab', name: 'New Name' }),
+      });
+
+      expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subflows: [{ id: 'sf1', type: 'subflow', name: 'New Name', nodes: [] }],
+        })
+      );
+    });
   });
 
   describe('deleteSubflow', () => {
@@ -693,6 +724,7 @@ describe('Tool Handlers', () => {
         subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow' }],
       } as any);
       vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+      vi.mocked(mockClient.getFlows).mockResolvedValue({ rev: 'r1', flows: [] });
 
       const result = await deleteSubflow(mockClient, { subflowId: 'sf1' });
 
@@ -708,6 +740,25 @@ describe('Tool Handlers', () => {
       await expect(deleteSubflow(mockClient, { subflowId: 'missing' })).rejects.toThrow(
         'not found'
       );
+    });
+
+    it('should refuse to delete a subflow that still has instances', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'My Subflow' }],
+      } as any);
+      vi.mocked(mockClient.getFlows).mockResolvedValue({
+        rev: 'r1',
+        flows: [
+          { id: 'tab1', type: 'tab', label: 'Flow 1' },
+          { id: 'n1', type: 'subflow:sf1', z: 'tab1' },
+        ],
+      } as any);
+
+      await expect(deleteSubflow(mockClient, { subflowId: 'sf1' })).rejects.toThrow(
+        'still used by 1 instance node(s) (n1)'
+      );
+      expect(mockClient.updateGlobalFlow).not.toHaveBeenCalled();
     });
   });
 

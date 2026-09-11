@@ -161,7 +161,7 @@ export function createServer() {
       {
         name: 'create_subflow',
         description:
-          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. The subflow is added to the global flow.',
+          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -177,7 +177,7 @@ export function createServer() {
       {
         name: 'update_subflow',
         description:
-          'Update an existing subflow definition by ID. Only the specified subflow is modified.',
+          'Update an existing subflow definition by ID. Fields in "updates" are merged into the existing definition; id and type cannot be changed. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -197,7 +197,7 @@ export function createServer() {
       {
         name: 'delete_subflow',
         description:
-          'Delete a subflow definition from Node-RED by ID. Removes the subflow from the global flow.',
+          'Delete a subflow definition from Node-RED by ID. Errors if any flow still contains an instance of the subflow. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -212,7 +212,7 @@ export function createServer() {
       {
         name: 'create_global_config_node',
         description:
-          'Create a new global config node (no z property) accessible from all flows. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if a node with that id already exists or if the node contains a z property.',
+          'Create a new global config node (no z property) accessible from all flows. Errors if a node with that id already exists or if the node contains a z property. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -228,7 +228,7 @@ export function createServer() {
       {
         name: 'update_global_config_node',
         description:
-          'Update an existing global config node by replacing it. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if the node does not exist, has a z property, or the replacement contains a z property.',
+          'Update an existing global config node by replacing it. Errors if the node does not exist or if the replacement contains a z property. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -248,7 +248,7 @@ export function createServer() {
       {
         name: 'delete_global_config_node',
         description:
-          'Delete a global config node by ID. Uses PUT /flows with Node-RED-Deployment-Type: nodes. Errors if the node does not exist, has a z property, or is still referenced by other nodes.',
+          'Delete a global config node by ID. Errors if the node does not exist or is still referenced by other nodes. Rewrites the global flow, so a concurrent editor deploy can be overwritten.',
         inputSchema: {
           type: 'object',
           properties: {

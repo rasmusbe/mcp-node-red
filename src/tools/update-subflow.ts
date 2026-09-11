@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
+import { NodeRedSubflowSchema } from '../schemas.js';
 
 const UpdateSubflowArgsSchema = z.object({
   subflowId: z.string(),
@@ -26,12 +27,18 @@ export async function updateSubflow(client: NodeRedClient, args: unknown) {
     throw new Error(`Subflow with id "${parsed.subflowId}" not found`);
   }
 
-  const updatedSubflows = [...subflows];
-  updatedSubflows[index] = {
+  // Validate the merged result, not just the incoming patch. PUT /flow/global replaces every
+  // subflow with what is sent, so an update that drops name or changes type writes a broken
+  // definition that the next read cannot parse, leaving the subflow tools unusable.
+  const merged = NodeRedSubflowSchema.parse({
     ...subflows[index],
     ...(typeof updateData === 'object' && updateData !== null ? updateData : {}),
     id: parsed.subflowId,
-  };
+    type: 'subflow',
+  });
+
+  const updatedSubflows = [...subflows];
+  updatedSubflows[index] = merged;
 
   await client.updateGlobalFlow({ ...globalFlow, subflows: updatedSubflows });
 

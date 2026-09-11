@@ -22,7 +22,7 @@ export async function createGlobalConfigNode(client: NodeRedClient, args: unknow
 
   if (validated.z !== undefined) {
     throw new Error(
-      'Global config nodes must not have a z property — flow-scoped config nodes are managed by the flow tools'
+      'Global config nodes must not have a z property. Flow-scoped config nodes are managed by the flow tools'
     );
   }
 
