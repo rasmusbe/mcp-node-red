@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeRedClient } from '../src/client.js';
+import { createFlow } from '../src/tools/create-flow.js';
 import { createGlobalConfigNode } from '../src/tools/create-global-config-node.js';
 import { createSubflow } from '../src/tools/create-subflow.js';
 import { deleteContext } from '../src/tools/delete-context.js';
@@ -30,6 +31,7 @@ describe('Tool Handlers', () => {
     mockClient = {
       getFlows: vi.fn(),
       getFlow: vi.fn(),
+      createFlow: vi.fn(),
       getContext: vi.fn(),
       deleteContext: vi.fn(),
       updateFlow: vi.fn(),
@@ -112,6 +114,40 @@ describe('Tool Handlers', () => {
 
     it('should throw when flowId is missing', async () => {
       await expect(getFlow(mockClient, {})).rejects.toThrow();
+    });
+  });
+
+  describe('createFlow', () => {
+    it('should accept a flow without an id and report the generated one', async () => {
+      vi.mocked(mockClient.createFlow).mockResolvedValue({ id: 'generated-id' });
+
+      const result = await createFlow(mockClient, {
+        flow: JSON.stringify({ label: 'New Flow', nodes: [] }),
+      });
+
+      expect(mockClient.createFlow).toHaveBeenCalledWith({ label: 'New Flow', nodes: [] });
+      expect(JSON.parse(result.content[0].text)).toEqual({ id: 'generated-id' });
+    });
+
+    it('should pass an explicit id through', async () => {
+      vi.mocked(mockClient.createFlow).mockResolvedValue({ id: 'flow-1' });
+
+      await createFlow(mockClient, {
+        flow: JSON.stringify({ id: 'flow-1', label: 'New Flow', nodes: [], configs: [] }),
+      });
+
+      expect(mockClient.createFlow).toHaveBeenCalledWith({
+        id: 'flow-1',
+        label: 'New Flow',
+        nodes: [],
+        configs: [],
+      });
+    });
+
+    it('should throw on invalid JSON', async () => {
+      await expect(createFlow(mockClient, { flow: 'not json' })).rejects.toThrow(
+        'Invalid JSON in flow parameter'
+      );
     });
   });
 
@@ -901,6 +937,28 @@ describe('Tool Handlers', () => {
       vi.mocked(mockClient.getFlows).mockResolvedValue({
         rev: 'rev1',
         flows: [{ id: 'node1', type: 'mqtt in', z: 'tab1', broker: 'cfg1' }],
+      } as any);
+
+      await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(
+        'still referenced'
+      );
+    });
+
+    it('should throw when the reference is nested inside another property', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        configs: [{ id: 'cfg1', type: 'mqtt-broker' }],
+      } as any);
+      vi.mocked(mockClient.getFlows).mockResolvedValue({
+        rev: 'rev1',
+        flows: [
+          {
+            id: 'node1',
+            type: 'ui_template',
+            z: 'tab1',
+            rules: [{ property: 'broker', value: { ref: 'cfg1' } }],
+          },
+        ],
       } as any);
 
       await expect(deleteGlobalConfigNode(mockClient, { nodeId: 'cfg1' })).rejects.toThrow(

@@ -1,6 +1,6 @@
 import { request } from 'undici';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeRedClient } from '../src/client.js';
+import { NodeRedClient, nodeRedAgent } from '../src/client.js';
 import type { Config } from '../src/schemas.js';
 
 vi.mock('undici');
@@ -35,6 +35,7 @@ describe('NodeRedClient - Runtime Info', () => {
       expect(result).toEqual(mockSettings);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/settings', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -82,6 +83,7 @@ describe('NodeRedClient - Runtime Info', () => {
       expect(result).toEqual(mockDiagnostics);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/diagnostics', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -121,6 +123,7 @@ describe('NodeRedClient - Runtime Info', () => {
       expect(result).toBe(mockHtml);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes/node-red/inject', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',

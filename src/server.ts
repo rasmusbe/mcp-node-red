@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { NodeRedClient } from './client.js';
@@ -29,6 +30,13 @@ import { updateGlobalConfigNode } from './tools/update-global-config-node.js';
 import { updateSubflow } from './tools/update-subflow.js';
 import { validateFlow } from './tools/validate-flow.js';
 
+/**
+ * Report the published version rather than a second copy that drifts from package.json. A JSON
+ * import will not compile with rootDir ./src, and both src/server.ts and dist/server.js sit one
+ * level below the repo root, so the same relative path works for tests and for the build.
+ */
+const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+
 export function createServer() {
   const nodeRedUrl = process.env.NODE_RED_URL;
   const nodeRedToken = process.env.NODE_RED_TOKEN;
@@ -47,7 +55,7 @@ export function createServer() {
   const server = new Server(
     {
       name: 'node-red-mcp-server',
-      version: '1.0.0',
+      version,
     },
     {
       capabilities: {
@@ -479,61 +487,65 @@ export function createServer() {
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    // extra.signal fires when the caller cancels the request, so bind it to the HTTP calls this
+    // handler is about to make instead of letting them run on to completion.
+    const scoped = client.withSignal(extra.signal);
+
     try {
       switch (request.params.name) {
         case 'list_flows':
-          return await listFlows(client);
+          return await listFlows(scoped);
         case 'get_flow':
-          return await getFlow(client, request.params.arguments);
+          return await getFlow(scoped, request.params.arguments);
         case 'create_flow':
-          return await createFlow(client, request.params.arguments);
+          return await createFlow(scoped, request.params.arguments);
         case 'update_flow':
-          return await updateFlow(client, request.params.arguments);
+          return await updateFlow(scoped, request.params.arguments);
         case 'validate_flow':
-          return await validateFlow(client, request.params.arguments);
+          return await validateFlow(scoped, request.params.arguments);
         case 'delete_flow':
-          return await deleteFlow(client, request.params.arguments);
+          return await deleteFlow(scoped, request.params.arguments);
         case 'get_subflows':
-          return await getSubflows(client);
+          return await getSubflows(scoped);
         case 'create_subflow':
-          return await createSubflow(client, request.params.arguments);
+          return await createSubflow(scoped, request.params.arguments);
         case 'update_subflow':
-          return await updateSubflow(client, request.params.arguments);
+          return await updateSubflow(scoped, request.params.arguments);
         case 'delete_subflow':
-          return await deleteSubflow(client, request.params.arguments);
+          return await deleteSubflow(scoped, request.params.arguments);
         case 'create_global_config_node':
-          return await createGlobalConfigNode(client, request.params.arguments);
+          return await createGlobalConfigNode(scoped, request.params.arguments);
         case 'update_global_config_node':
-          return await updateGlobalConfigNode(client, request.params.arguments);
+          return await updateGlobalConfigNode(scoped, request.params.arguments);
         case 'delete_global_config_node':
-          return await deleteGlobalConfigNode(client, request.params.arguments);
+          return await deleteGlobalConfigNode(scoped, request.params.arguments);
         case 'get_flow_state':
-          return await getFlowState(client);
+          return await getFlowState(scoped);
         case 'set_flow_state':
-          return await setFlowState(client, request.params.arguments);
+          return await setFlowState(scoped, request.params.arguments);
         case 'get_context':
-          return await getContext(client, request.params.arguments);
+          return await getContext(scoped, request.params.arguments);
         case 'delete_context':
-          return await deleteContext(client, request.params.arguments);
+          return await deleteContext(scoped, request.params.arguments);
         case 'get_nodes':
-          return await getNodes(client);
+          return await getNodes(scoped);
         case 'get_node_help':
-          return await getNodeHelp(client, request.params.arguments);
+          return await getNodeHelp(scoped, request.params.arguments);
         case 'install_node':
-          return await installNode(client, request.params.arguments);
+          return await installNode(scoped, request.params.arguments);
         case 'set_node_module_state':
-          return await setNodeModuleState(client, request.params.arguments);
+          return await setNodeModuleState(scoped, request.params.arguments);
         case 'remove_node_module':
-          return await removeNodeModule(client, request.params.arguments);
+          return await removeNodeModule(scoped, request.params.arguments);
         case 'get_settings':
-          return await getSettings(client);
+          return await getSettings(scoped);
         case 'get_diagnostics':
-          return await getDiagnostics(client);
+          return await getDiagnostics(scoped);
         case 'trigger_inject':
-          return await triggerInject(client, request.params.arguments);
+          return await triggerInject(scoped, request.params.arguments);
         case 'set_debug_state':
-          return await setDebugState(client, request.params.arguments);
+          return await setDebugState(scoped, request.params.arguments);
         default:
           throw new Error(`Unknown tool: ${request.params.name}`);
       }

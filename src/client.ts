@@ -1,7 +1,8 @@
-import { request } from 'undici';
+import { Agent, request } from 'undici';
 import { z } from 'zod';
 import type {
   Config,
+  CreateFlowRequest,
   FlowState,
   NodeModule,
   NodeRedDiagnostics,
@@ -19,15 +20,34 @@ import {
   NodeRedSettingsSchema,
 } from './schemas.js';
 
+/** Give up on an unreachable host quickly: nothing here is worth a long connect wait. */
+export const CONNECT_TIMEOUT_MS = 5_000;
+export const HEADERS_TIMEOUT_MS = 30_000;
+export const BODY_TIMEOUT_MS = 30_000;
+
 /**
- * Build the path segments for /nodes/:module/:set.
- *
- * Node-RED routes this endpoint with /^\/nodes\/((@[^\/]+\/)?[^\/]+)\/([^\/]+)$/, so the
- * separator in a scoped module name has to arrive as a literal slash and the leading @ has to
- * stay unencoded. Running encodeURIComponent over the whole string turns those into %2F and
- * %40: Express decodes them again, but Apache rejects encoded slashes by default and several
- * proxies rewrite them, so encode per segment instead and leave @ alone.
+ * POST /nodes runs npm inside Node-RED, which downloads and sometimes builds a package, so
+ * minutes are normal there and the shared cap would abort an install that is working.
  */
+export const INSTALL_TIMEOUT_MS = 300_000;
+
+/** Enough of an error body to identify the failure, not enough to flood the transcript. */
+const MAX_ERROR_DETAIL_CHARS = 500;
+
+/**
+ * undici defaults headersTimeout and bodyTimeout to 300 s, so a Node-RED that accepts the
+ * connection and then stalls holds an MCP call open for five minutes with nothing to show for
+ * it. One agent for the process also keeps the connection pool shared across requests.
+ */
+export const nodeRedAgent = new Agent({
+  connectTimeout: CONNECT_TIMEOUT_MS,
+  headersTimeout: HEADERS_TIMEOUT_MS,
+  bodyTimeout: BODY_TIMEOUT_MS,
+});
+
+type HttpRequestOptions = NonNullable<Parameters<typeof request>[1]>;
+type HttpResponse = Awaited<ReturnType<typeof request>>;
+
 /**
  * A flow id is a single path segment, so anything in it that would be read as structure has to
  * be encoded. Without this an id like "../nodes" silently resolves to a different endpoint
@@ -37,6 +57,15 @@ function encodeFlowId(value: string): string {
   return encodeURIComponent(value);
 }
 
+/**
+ * Build the path segments for /nodes/:module/:set.
+ *
+ * Node-RED routes this endpoint with /^\/nodes\/((@[^\/]+\/)?[^\/]+)\/([^\/]+)$/, so the
+ * separator in a scoped module name has to arrive as a literal slash and the leading @ has to
+ * stay unencoded. Running encodeURIComponent over the whole string turns those into %2F and
+ * %40: Express decodes them again, but Apache rejects encoded slashes by default and several
+ * proxies rewrite them, so encode per segment instead and leave @ alone.
+ */
 function encodeNodePath(value: string): string {
   return value
     .split('/')
@@ -44,10 +73,44 @@ function encodeNodePath(value: string): string {
     .join('/');
 }
 
+/**
+ * Node-RED answers its own errors with {code, message}, but a reverse proxy or the Home
+ * Assistant ingress in front of it answers with an HTML page, and pasting that page into an
+ * error message costs the caller thousands of tokens and says nothing. Prefer the message,
+ * otherwise a single capped line.
+ */
+function describeErrorBody(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) {
+    return '';
+  }
+
+  const detail = jsonErrorMessage(trimmed) ?? trimmed.replace(/\s+/g, ' ');
+  return detail.length > MAX_ERROR_DETAIL_CHARS
+    ? `${detail.slice(0, MAX_ERROR_DETAIL_CHARS)}...`
+    : detail;
+}
+
+function jsonErrorMessage(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed !== null && typeof parsed === 'object') {
+      const { message } = parsed as { message?: unknown };
+      if (typeof message === 'string') {
+        return message;
+      }
+    }
+  } catch {
+    // Not JSON, so the raw text is all there is.
+  }
+  return undefined;
+}
+
 export class NodeRedClient {
   private readonly baseUrl: string;
   private readonly token?: string;
   private readonly basicAuth?: string;
+  private readonly signal?: AbortSignal;
 
   constructor(config: Config) {
     const url = new URL(config.nodeRedUrl);
@@ -61,6 +124,21 @@ export class NodeRedClient {
 
     this.baseUrl = url.toString().replace(/\/$/, '');
     this.token = config.nodeRedToken;
+  }
+
+  /**
+   * A view of this client whose requests abort with `signal`. The MCP SDK hands every request
+   * handler a signal that fires when the caller cancels; without passing it on, a cancelled
+   * call leaves the Node-RED request running and the connection tied up.
+   */
+  withSignal(signal?: AbortSignal): NodeRedClient {
+    if (!signal) {
+      return this;
+    }
+
+    return Object.assign(Object.create(Object.getPrototypeOf(this)), this, {
+      signal,
+    }) as NodeRedClient;
   }
 
   private getHeaders(): Record<string, string> {
@@ -78,50 +156,80 @@ export class NodeRedClient {
     return headers;
   }
 
+  private options(init: HttpRequestOptions): HttpRequestOptions {
+    return { ...init, dispatcher: nodeRedAgent, signal: this.signal };
+  }
+
+  private async fail(action: string, response: HttpResponse): Promise<never> {
+    let body = '';
+    try {
+      body = (await response.body.text()) ?? '';
+    } catch {
+      // A body that cannot be read still leaves us the status code.
+    }
+
+    const detail = describeErrorBody(body);
+    throw new Error(`Failed to ${action}: ${response.statusCode} ${detail}`.trimEnd());
+  }
+
   async getFlows(): Promise<NodeRedFlowsResponse> {
-    const response = await request(`${this.baseUrl}/flows`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/flows`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get flows: ${response.statusCode}\n${body}`);
+      await this.fail('get flows', response);
     }
 
     const data = await response.body.json();
     return NodeRedFlowsResponseSchema.parse(data);
   }
 
-  async createFlow(flowData: UpdateFlowRequest): Promise<{ id: string }> {
-    const response = await request(`${this.baseUrl}/flow`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(flowData),
-    });
+  async createFlow(flowData: CreateFlowRequest): Promise<{ id: string }> {
+    const response = await request(
+      `${this.baseUrl}/flow`,
+      this.options({
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(flowData),
+      })
+    );
 
     if (response.statusCode !== 200 && response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to create flow: ${response.statusCode}\n${body}`);
+      await this.fail('create flow', response);
     }
 
-    if (response.statusCode === 204) {
+    // A generated id only comes back in the 200 body, so a 204 is only usable when the caller
+    // named the flow itself.
+    if (response.statusCode === 200) {
+      const data = (await response.body.json()) as { id?: unknown };
+      if (typeof data?.id === 'string') {
+        return { id: data.id };
+      }
+    }
+
+    if (flowData.id) {
       return { id: flowData.id };
     }
-    const data = await response.body.json();
-    return data as { id: string };
+
+    throw new Error(
+      `Node-RED returned no id for the created flow (status ${response.statusCode}). Send the flow with an explicit id to control it.`
+    );
   }
 
   async updateFlow(flowId: string, flowData: UpdateFlowRequest): Promise<{ id: string }> {
-    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(flowData),
-    });
+    const response = await request(
+      `${this.baseUrl}/flow/${encodeFlowId(flowId)}`,
+      this.options({
+        method: 'PUT',
+        headers: this.getHeaders(),
+        body: JSON.stringify(flowData),
+      })
+    );
 
     if (response.statusCode !== 200 && response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to update flow: ${response.statusCode}\n${body}`);
+      await this.fail('update flow', response);
     }
 
     if (response.statusCode === 204) {
@@ -132,28 +240,26 @@ export class NodeRedClient {
   }
 
   async getFlow(flowId: string): Promise<unknown> {
-    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/flow/${encodeFlowId(flowId)}`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get flow: ${response.statusCode}\n${body}`);
+      await this.fail('get flow', response);
     }
 
     return await response.body.json();
   }
 
   async getGlobalFlow(): Promise<NodeRedGlobalFlowResponse> {
-    const response = await request(`${this.baseUrl}/flow/global`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/flow/global`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get global flow: ${response.statusCode}\n${body}`);
+      await this.fail('get global flow', response);
     }
 
     const data = await response.body.json();
@@ -161,15 +267,17 @@ export class NodeRedClient {
   }
 
   async updateGlobalFlow(flowData: NodeRedGlobalFlowResponse): Promise<{ id: string }> {
-    const response = await request(`${this.baseUrl}/flow/global`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify(flowData),
-    });
+    const response = await request(
+      `${this.baseUrl}/flow/global`,
+      this.options({
+        method: 'PUT',
+        headers: this.getHeaders(),
+        body: JSON.stringify(flowData),
+      })
+    );
 
     if (response.statusCode !== 200 && response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to update global flow: ${response.statusCode}\n${body}`);
+      await this.fail('update global flow', response);
     }
 
     if (response.statusCode === 204) {
@@ -180,26 +288,24 @@ export class NodeRedClient {
   }
 
   async deleteFlow(flowId: string): Promise<void> {
-    const response = await request(`${this.baseUrl}/flow/${encodeFlowId(flowId)}`, {
-      method: 'DELETE',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/flow/${encodeFlowId(flowId)}`,
+      this.options({ method: 'DELETE', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to delete flow: ${response.statusCode}\n${body}`);
+      await this.fail('delete flow', response);
     }
   }
 
   async getFlowState(): Promise<FlowState> {
-    const response = await request(`${this.baseUrl}/flows/state`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/flows/state`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get flow state: ${response.statusCode}\n${body}`);
+      await this.fail('get flow state', response);
     }
 
     const data = await response.body.json();
@@ -207,15 +313,17 @@ export class NodeRedClient {
   }
 
   async setFlowState(state: 'start' | 'stop'): Promise<FlowState> {
-    const response = await request(`${this.baseUrl}/flows/state`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({ state }),
-    });
+    const response = await request(
+      `${this.baseUrl}/flows/state`,
+      this.options({
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ state }),
+      })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to set flow state: ${response.statusCode}\n${body}`);
+      await this.fail('set flow state', response);
     }
 
     const data = await response.body.json();
@@ -223,14 +331,13 @@ export class NodeRedClient {
   }
 
   async getSettings(): Promise<NodeRedSettings> {
-    const response = await request(`${this.baseUrl}/settings`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/settings`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get settings: ${response.statusCode}\n${body}`);
+      await this.fail('get settings', response);
     }
 
     const data = await response.body.json();
@@ -238,14 +345,13 @@ export class NodeRedClient {
   }
 
   async getDiagnostics(): Promise<NodeRedDiagnostics> {
-    const response = await request(`${this.baseUrl}/diagnostics`, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/diagnostics`,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get diagnostics: ${response.statusCode}\n${body}`);
+      await this.fail('get diagnostics', response);
     }
 
     const data = await response.body.json();
@@ -260,23 +366,22 @@ export class NodeRedClient {
   ): Promise<unknown> {
     let url = `${this.baseUrl}/context/${scope}`;
     if (scope !== 'global' && id) {
-      url += `/${id}`;
+      url += `/${encodeURIComponent(id)}`;
     }
     if (key) {
-      url += `/${key}`;
+      url += `/${encodeURIComponent(key)}`;
     }
     if (store) {
       url += `?store=${encodeURIComponent(store)}`;
     }
 
-    const response = await request(url, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      url,
+      this.options({ method: 'GET', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get context: ${response.statusCode}\n${body}`);
+      await this.fail('get context', response);
     }
 
     return await response.body.json();
@@ -290,48 +395,45 @@ export class NodeRedClient {
   ): Promise<void> {
     let url = `${this.baseUrl}/context/${scope}`;
     if (scope === 'global') {
-      url += `/${key}`;
+      url += `/${encodeURIComponent(key ?? '')}`;
     } else {
-      url += `/${id}/${key}`;
+      url += `/${encodeURIComponent(id ?? '')}/${encodeURIComponent(key ?? '')}`;
     }
     if (store) {
       url += `?store=${encodeURIComponent(store)}`;
     }
 
-    const response = await request(url, {
-      method: 'DELETE',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      url,
+      this.options({ method: 'DELETE', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to delete context: ${response.statusCode}\n${body}`);
+      await this.fail('delete context', response);
     }
   }
 
   async triggerInject(nodeId: string): Promise<void> {
-    const response = await request(`${this.baseUrl}/inject/${nodeId}`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/inject/${encodeURIComponent(nodeId)}`,
+      this.options({ method: 'POST', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to trigger inject node: ${response.statusCode}\n${body}`);
+      await this.fail('trigger inject node', response);
     }
   }
 
   async setDebugNodeState(nodeId: string, enabled: boolean): Promise<void> {
     const action = enabled ? 'enable' : 'disable';
-    const response = await request(`${this.baseUrl}/debug/${nodeId}/${action}`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/debug/${encodeURIComponent(nodeId)}/${action}`,
+      this.options({ method: 'POST', headers: this.getHeaders() })
+    );
 
     // enable returns 200, disable returns 201
     if (response.statusCode !== 200 && response.statusCode !== 201) {
-      const body = await response.body.text();
-      throw new Error(`Failed to ${action} debug node: ${response.statusCode}\n${body}`);
+      await this.fail(`${action} debug node`, response);
     }
   }
 
@@ -380,14 +482,13 @@ export class NodeRedClient {
   async getNodes(): Promise<NodeModule[]> {
     const headers = this.getHeaders();
     headers.Accept = 'application/json';
-    const response = await request(`${this.baseUrl}/nodes`, {
-      method: 'GET',
-      headers,
-    });
+    const response = await request(
+      `${this.baseUrl}/nodes`,
+      this.options({ method: 'GET', headers })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get nodes: ${response.statusCode}\n${body}`);
+      await this.fail('get nodes', response);
     }
 
     const data = await response.body.json();
@@ -404,30 +505,30 @@ export class NodeRedClient {
     headers.Accept = 'text/html';
     const response = await request(
       `${this.baseUrl}/nodes/${encodeNodePath(module)}/${encodeNodePath(set)}`,
-      {
-        method: 'GET',
-        headers,
-      }
+      this.options({ method: 'GET', headers })
     );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to get node config: ${response.statusCode}\n${body}`);
+      await this.fail('get node config', response);
     }
 
     return await response.body.text();
   }
 
   async installNode(module: string): Promise<NodeModule> {
-    const response = await request(`${this.baseUrl}/nodes`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({ module }),
-    });
+    const response = await request(
+      `${this.baseUrl}/nodes`,
+      this.options({
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ module }),
+        headersTimeout: INSTALL_TIMEOUT_MS,
+        bodyTimeout: INSTALL_TIMEOUT_MS,
+      })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to install node module: ${response.statusCode}\n${body}`);
+      await this.fail('install node module', response);
     }
 
     const data = await response.body.json();
@@ -435,15 +536,17 @@ export class NodeRedClient {
   }
 
   async setNodeModuleState(module: string, enabled: boolean): Promise<NodeModule> {
-    const response = await request(`${this.baseUrl}/nodes/${module}`, {
-      method: 'PUT',
-      headers: this.getHeaders(),
-      body: JSON.stringify({ enabled }),
-    });
+    const response = await request(
+      `${this.baseUrl}/nodes/${encodeNodePath(module)}`,
+      this.options({
+        method: 'PUT',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ enabled }),
+      })
+    );
 
     if (response.statusCode !== 200) {
-      const body = await response.body.text();
-      throw new Error(`Failed to set node module state: ${response.statusCode}\n${body}`);
+      await this.fail('set node module state', response);
     }
 
     const data = await response.body.json();
@@ -451,14 +554,13 @@ export class NodeRedClient {
   }
 
   async removeNodeModule(module: string): Promise<void> {
-    const response = await request(`${this.baseUrl}/nodes/${module}`, {
-      method: 'DELETE',
-      headers: this.getHeaders(),
-    });
+    const response = await request(
+      `${this.baseUrl}/nodes/${encodeNodePath(module)}`,
+      this.options({ method: 'DELETE', headers: this.getHeaders() })
+    );
 
     if (response.statusCode !== 204) {
-      const body = await response.body.text();
-      throw new Error(`Failed to remove node module: ${response.statusCode}\n${body}`);
+      await this.fail('remove node module', response);
     }
   }
 }

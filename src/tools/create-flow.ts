@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
-import { UpdateFlowRequestSchema } from '../schemas.js';
+import { CreateFlowRequestSchema } from '../schemas.js';
 
 const CreateFlowArgsSchema = z.object({
   flow: z.string(),
@@ -18,7 +18,7 @@ export async function createFlow(client: NodeRedClient, args: unknown) {
     );
   }
 
-  const validated = UpdateFlowRequestSchema.parse(flowData);
+  const validated = CreateFlowRequestSchema.parse(flowData);
 
   const result = await client.createFlow(validated);
 

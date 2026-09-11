@@ -1,7 +1,18 @@
-import { request } from 'undici';
+import { Agent, request } from 'undici';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { NodeRedClient } from '../src/client.js';
+import {
+  BODY_TIMEOUT_MS,
+  CONNECT_TIMEOUT_MS,
+  HEADERS_TIMEOUT_MS,
+  INSTALL_TIMEOUT_MS,
+  NodeRedClient,
+  nodeRedAgent,
+} from '../src/client.js';
 import type { Config } from '../src/schemas.js';
+
+// The client builds its Agent when the module is first imported, so read the options here,
+// before the first beforeEach clears the mock.
+const agentOptions = vi.mocked(Agent).mock.calls[0]?.[0];
 
 vi.mock('undici');
 
@@ -40,6 +51,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockFlows);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -117,6 +129,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -149,6 +162,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockResponse);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flow', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -176,6 +190,31 @@ describe('NodeRedClient', () => {
       const result = await client.createFlow(flowData);
 
       expect(result).toEqual({ id: 'new-flow' });
+    });
+
+    it('should return the id Node-RED generated when the flow has none', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ id: 'generated-id' }),
+          text: vi.fn(),
+        },
+      } as any);
+
+      const result = await client.createFlow({ label: 'New Flow', nodes: [] });
+
+      expect(result).toEqual({ id: 'generated-id' });
+    });
+
+    it('should throw when a 204 leaves no id to report', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 204,
+        body: { text: vi.fn(), json: vi.fn() },
+      } as any);
+
+      await expect(client.createFlow({ label: 'New Flow' })).rejects.toThrow(
+        'Node-RED returned no id'
+      );
     });
 
     it('should throw error on failed create', async () => {
@@ -216,6 +255,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockResponse);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/1', {
         method: 'PUT',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -272,6 +312,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/flow-1', {
         method: 'DELETE',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -370,6 +411,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockState);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows/state', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -418,6 +460,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockState);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows/state', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -443,6 +486,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockState);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows/state', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -487,6 +531,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockData);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/context/global', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -503,6 +548,18 @@ describe('NodeRedClient', () => {
       await client.getContext('global', undefined, 'myKey');
       expect(request).toHaveBeenCalledWith(
         'http://localhost:1880/context/global/myKey',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should encode ids and keys that contain a slash', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue({}), text: vi.fn() },
+      } as any);
+      await client.getContext('flow', 'flow/1', 'nested/key');
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/context/flow/flow%2F1/nested%2Fkey',
         expect.objectContaining({ method: 'GET' })
       );
     });
@@ -603,6 +660,18 @@ describe('NodeRedClient', () => {
       );
     });
 
+    it('should encode a key that contains a slash', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 204,
+        body: { text: vi.fn() },
+      } as any);
+      await client.deleteContext('global', undefined, 'nested/key');
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/context/global/nested%2Fkey',
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
     it('should include store query param on delete', async () => {
       vi.mocked(request).mockResolvedValue({
         statusCode: 204,
@@ -639,12 +708,27 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/inject/node-123', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
           Authorization: 'Bearer test-token',
         },
       });
+    });
+
+    it('should encode a node id that contains a slash', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { text: vi.fn() },
+      } as any);
+
+      await client.triggerInject('node/123');
+
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/inject/node%2F123',
+        expect.objectContaining({ method: 'POST' })
+      );
     });
 
     it('should throw error when inject node not found', async () => {
@@ -687,6 +771,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/debug/debug-1/enable', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -707,6 +792,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/debug/debug-1/disable', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -752,6 +838,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flows', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -792,6 +879,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockModules);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -878,12 +966,15 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockModule);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes', {
         method: 'POST',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
           Authorization: 'Bearer test-token',
         },
         body: JSON.stringify({ module: 'node-red-contrib-example' }),
+        headersTimeout: INSTALL_TIMEOUT_MS,
+        bodyTimeout: INSTALL_TIMEOUT_MS,
       });
     });
 
@@ -930,6 +1021,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockModule);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes/node-red-contrib-example', {
         method: 'PUT',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -966,6 +1058,7 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes/node-red-contrib-example', {
         method: 'PUT',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
@@ -973,6 +1066,23 @@ describe('NodeRedClient', () => {
         },
         body: JSON.stringify({ enabled: false }),
       });
+    });
+
+    it('should keep the slash in a scoped module name', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ name: '@scope/node-red-example', version: '1.0.0' }),
+          text: vi.fn(),
+        },
+      } as any);
+
+      await client.setNodeModuleState('@scope/node-red example', true);
+
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/nodes/@scope/node-red%20example',
+        expect.objectContaining({ method: 'PUT' })
+      );
     });
 
     it('should throw error on failed state change', async () => {
@@ -1002,12 +1112,27 @@ describe('NodeRedClient', () => {
 
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes/node-red-contrib-example', {
         method: 'DELETE',
+        dispatcher: nodeRedAgent,
         headers: {
           'Content-Type': 'application/json',
           'Node-RED-API-Version': 'v2',
           Authorization: 'Bearer test-token',
         },
       });
+    });
+
+    it('should keep the slash in a scoped module name', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 204,
+        body: { text: vi.fn() },
+      } as any);
+
+      await client.removeNodeModule('@scope/node-red example');
+
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/nodes/@scope/node-red%20example',
+        expect.objectContaining({ method: 'DELETE' })
+      );
     });
 
     it('should throw error when removing core module', async () => {
@@ -1067,6 +1192,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual(mockGlobal);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/global', {
         method: 'GET',
+        dispatcher: nodeRedAgent,
         headers: expect.objectContaining({ 'Node-RED-API-Version': 'v2' }),
       });
     });
@@ -1097,6 +1223,7 @@ describe('NodeRedClient', () => {
       expect(result).toEqual({ id: 'global' });
       expect(request).toHaveBeenCalledWith('http://localhost:1880/flow/global', {
         method: 'PUT',
+        dispatcher: nodeRedAgent,
         headers: expect.objectContaining({ 'Node-RED-API-Version': 'v2' }),
         body: JSON.stringify(globalFlow),
       });
@@ -1121,6 +1248,100 @@ describe('NodeRedClient', () => {
       await expect(client.updateGlobalFlow({ id: 'global' as const })).rejects.toThrow(
         'Failed to update global flow: 400'
       );
+    });
+  });
+  describe('request options', () => {
+    it('should cap the undici timeouts, which default to 300 s', () => {
+      expect(agentOptions).toEqual({
+        connectTimeout: 5_000,
+        headersTimeout: 30_000,
+        bodyTimeout: 30_000,
+      });
+      expect(CONNECT_TIMEOUT_MS).toBe(5_000);
+      expect(HEADERS_TIMEOUT_MS).toBe(30_000);
+      expect(BODY_TIMEOUT_MS).toBe(30_000);
+      expect(INSTALL_TIMEOUT_MS).toBe(300_000);
+    });
+  });
+
+  describe('withSignal', () => {
+    const okFlows = () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue({ rev: 'a', flows: [] }), text: vi.fn() },
+      } as any);
+    };
+
+    it('should forward the signal and keep the credentials', async () => {
+      const controller = new AbortController();
+      okFlows();
+
+      await client.withSignal(controller.signal).getFlows();
+
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/flows',
+        expect.objectContaining({
+          signal: controller.signal,
+          headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
+        })
+      );
+    });
+
+    it('should return the same client when there is no signal', () => {
+      expect(client.withSignal(undefined)).toBe(client);
+    });
+
+    it('should leave the client it came from unbound', async () => {
+      const controller = new AbortController();
+      okFlows();
+
+      client.withSignal(controller.signal);
+      await client.getFlows();
+
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/flows',
+        expect.not.objectContaining({ signal: controller.signal })
+      );
+    });
+  });
+
+  describe('error responses', () => {
+    const failWith = (statusCode: number, body: string) => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode,
+        body: { text: vi.fn().mockResolvedValue(body) },
+      } as any);
+    };
+
+    const messageOf = async (): Promise<string | undefined> => {
+      const error = await client.getFlows().then(
+        () => undefined,
+        (reason: unknown) => reason as Error
+      );
+      return error?.message;
+    };
+
+    it('should report the message from a JSON error body', async () => {
+      failWith(400, JSON.stringify({ code: 'flows.error', message: 'Unexpected node type' }));
+
+      await expect(messageOf()).resolves.toBe('Failed to get flows: 400 Unexpected node type');
+    });
+
+    it('should collapse and truncate a long HTML error body', async () => {
+      failWith(502, `<html>\n  <body>\n    ${'unavailable '.repeat(200)}\n  </body>\n</html>`);
+
+      const message = await messageOf();
+
+      expect(message).toMatch(/^Failed to get flows: 502 <html> <body> unavailable /);
+      // The status prefix, 500 characters of body and the truncation marker.
+      expect(message).toHaveLength('Failed to get flows: 502 '.length + 503);
+      expect(message?.endsWith('...')).toBe(true);
+    });
+
+    it('should leave no dangling separator when the body is empty', async () => {
+      failWith(500, '');
+
+      await expect(messageOf()).resolves.toBe('Failed to get flows: 500');
     });
   });
 });

@@ -6,17 +6,34 @@ const DeleteGlobalConfigNodeArgsSchema = z.object({
   nodeId: z.string(),
 });
 
-function isReferencedBy(flows: NodeRedItem[], nodeId: string): boolean {
-  for (const item of flows) {
-    if (item.id === nodeId) continue;
-    const obj = item as Record<string, unknown>;
-    for (const [key, value] of Object.entries(obj)) {
-      if (key === 'id') continue;
-      if (value === nodeId) return true;
-      if (Array.isArray(value) && value.some((v) => v === nodeId)) return true;
-    }
+/**
+ * Which property holds a config node reference varies by node type, and some nodes keep them
+ * inside nested objects or arrays of objects (rule lists, credential maps, subflow env entries).
+ * Anything short of a full search deletes a config node that is still wired up somewhere.
+ */
+function containsReference(value: unknown, nodeId: string): boolean {
+  if (typeof value === 'string') {
+    return value === nodeId;
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsReference(entry, nodeId));
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value).some((entry) => containsReference(entry, nodeId));
   }
   return false;
+}
+
+function isReferencedBy(flows: NodeRedItem[], nodeId: string): boolean {
+  return flows.some((item) => {
+    if (item.id === nodeId) {
+      return false;
+    }
+    // The node's own top-level id is what identifies it, not a reference to itself.
+    return Object.entries(item as Record<string, unknown>).some(
+      ([key, value]) => key !== 'id' && containsReference(value, nodeId)
+    );
+  });
 }
 
 export async function deleteGlobalConfigNode(client: NodeRedClient, args: unknown) {

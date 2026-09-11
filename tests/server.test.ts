@@ -1,7 +1,23 @@
+import { createRequire } from 'node:module';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { request } from 'undici';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../src/server.js';
+
+vi.mock('undici');
+
+const packageJson = createRequire(import.meta.url)('../package.json') as { version: string };
+
+async function connectedClient() {
+  const server = createServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test-client', version: '1.0.0' });
+
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  return { client, server };
+}
 
 describe('MCP Server', () => {
   const originalEnv = process.env;
@@ -64,6 +80,37 @@ describe('MCP Server', () => {
     expect(toolNames).toContain('delete_flow');
     expect(toolNames).toContain('get_node_help');
     expect(toolNames).not.toContain('get_flows');
+
+    await client.close();
+    await server.close();
+  });
+
+  it('should report the version from package.json', async () => {
+    process.env.NODE_RED_URL = 'http://localhost:1880';
+
+    const { client, server } = await connectedClient();
+
+    expect(client.getServerVersion()?.version).toBe(packageJson.version);
+
+    await client.close();
+    await server.close();
+  });
+
+  it('should pass the request signal down to the HTTP client', async () => {
+    process.env.NODE_RED_URL = 'http://localhost:1880';
+    vi.mocked(request).mockResolvedValue({
+      statusCode: 200,
+      body: { json: vi.fn().mockResolvedValue({ rev: 'r1', flows: [] }), text: vi.fn() },
+    } as any);
+
+    const { client, server } = await connectedClient();
+
+    await client.callTool({ name: 'list_flows', arguments: {} });
+
+    expect(request).toHaveBeenCalledWith(
+      'http://localhost:1880/flows',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
 
     await client.close();
     await server.close();

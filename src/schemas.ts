@@ -81,6 +81,13 @@ export const UpdateFlowRequestSchema = z
   })
   .passthrough();
 
+/**
+ * POST /flow generates an id when none is sent, so unlike an update the id is optional here.
+ */
+export const CreateFlowRequestSchema = UpdateFlowRequestSchema.extend({
+  id: z.string().optional(),
+});
+
 export const FlowStateSchema = z.object({
   state: z.enum(['start', 'stop']),
 });
@@ -146,6 +153,7 @@ export type NodeRedItem = z.infer<typeof NodeRedItemSchema>;
 export type NodeRedGlobalFlowResponse = z.infer<typeof NodeRedGlobalFlowResponseSchema>;
 export type NodeRedFlowsResponse = z.infer<typeof NodeRedFlowsResponseSchema>;
 export type UpdateFlowRequest = z.infer<typeof UpdateFlowRequestSchema>;
+export type CreateFlowRequest = z.infer<typeof CreateFlowRequestSchema>;
 export type FlowState = z.infer<typeof FlowStateSchema>;
 export type NodeSet = z.infer<typeof NodeSetSchema>;
 export type NodeModule = z.infer<typeof NodeModuleSchema>;

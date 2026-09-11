@@ -55,6 +55,12 @@ Restart Claude Desktop to load the server.
 - `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS` (optional): comma-separated header values the HTTP
   transport accepts
 
+### Timeouts
+
+Requests to Node-RED give up after 5 seconds without a connection and 30 seconds without a
+response or a body, instead of undici's 300 second default. `install_node` runs npm inside
+Node-RED, which can legitimately take minutes, so that one call is allowed 300 seconds.
+
 ## Transports
 
 By default the server speaks JSON-RPC over stdio, which is what most MCP clients launch.
