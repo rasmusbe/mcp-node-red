@@ -116,6 +116,101 @@ describe('Tool Handlers', () => {
     it('should throw when flowId is missing', async () => {
       await expect(getFlow(mockClient, {})).rejects.toThrow();
     });
+
+    describe('selection', () => {
+      const selectionFlow = {
+        id: 'flow1',
+        label: 'My Flow',
+        disabled: false,
+        info: 'Notes',
+        nodes: [
+          { id: 'n1', type: 'inject', z: 'flow1', name: 'Tick', x: 100, y: 80, wires: [['n2']] },
+          { id: 'n2', type: 'function', z: 'flow1', func: 'return msg;', x: 300, y: 80, g: 'g1' },
+          { id: 'n3', type: 'debug', z: 'flow1', x: 500, y: 80, wires: [[]] },
+        ],
+        configs: [{ id: 'c1', type: 'mqtt-broker', z: 'flow1', name: 'Broker', keepalive: 60 }],
+      };
+
+      beforeEach(() => {
+        vi.mocked(mockClient.getFlow).mockResolvedValue(selectionFlow);
+      });
+
+      it('should return the full flow when no option is given', async () => {
+        const result = await getFlow(mockClient, { flowId: 'flow1' });
+
+        expect(JSON.parse(result.content[0].text)).toEqual(selectionFlow);
+      });
+
+      it('should keep only the nodes named by nodeIds', async () => {
+        const result = await getFlow(mockClient, { flowId: 'flow1', nodeIds: ['n2', 'c1'] });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.nodes).toEqual([selectionFlow.nodes[1]]);
+        expect(parsed.configs).toEqual(selectionFlow.configs);
+        expect(parsed.totalNodes).toBe(3);
+        expect(parsed.totalConfigs).toBe(1);
+      });
+
+      it('should keep only the nodes of the given types', async () => {
+        const result = await getFlow(mockClient, { flowId: 'flow1', types: ['debug'] });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.nodes).toEqual([selectionFlow.nodes[2]]);
+        expect(parsed.configs).toEqual([]);
+      });
+
+      it('should keep a node matched by either filter', async () => {
+        const result = await getFlow(mockClient, {
+          flowId: 'flow1',
+          nodeIds: ['n1'],
+          types: ['debug'],
+        });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.nodes.map((n: { id: string }) => n.id)).toEqual(['n1', 'n3']);
+      });
+
+      it('should reduce nodes to structure with summary', async () => {
+        const result = await getFlow(mockClient, { flowId: 'flow1', summary: true });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed).toEqual({
+          id: 'flow1',
+          label: 'My Flow',
+          disabled: false,
+          info: 'Notes',
+          nodes: [
+            { id: 'n1', type: 'inject', name: 'Tick', wires: [['n2']] },
+            { id: 'n2', type: 'function', g: 'g1' },
+            { id: 'n3', type: 'debug' },
+          ],
+          configs: [{ id: 'c1', type: 'mqtt-broker', name: 'Broker' }],
+        });
+      });
+
+      it('should not report totals when nothing is filtered out', async () => {
+        const result = await getFlow(mockClient, { flowId: 'flow1', summary: true });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.totalNodes).toBeUndefined();
+        expect(parsed.totalConfigs).toBeUndefined();
+      });
+
+      it('should combine filtering and summary', async () => {
+        const result = await getFlow(mockClient, {
+          flowId: 'flow1',
+          types: ['inject'],
+          summary: true,
+        });
+
+        expect(JSON.parse(result.content[0].text)).toMatchObject({
+          totalNodes: 3,
+          totalConfigs: 1,
+          nodes: [{ id: 'n1', type: 'inject', name: 'Tick', wires: [['n2']] }],
+          configs: [],
+        });
+      });
+    });
   });
 
   describe('createFlow', () => {
@@ -1061,5 +1156,142 @@ describe('Tool Handlers', () => {
         'still referenced'
       );
     });
+  });
+
+  describe('object and JSON string parameters', () => {
+    const globalFlow = {
+      id: 'global',
+      configs: [{ id: 'cfg1', type: 'mqtt-broker', name: 'Old Broker' }],
+      subflows: [{ id: 'sf1', type: 'subflow', name: 'Old Name', nodes: [] }],
+    };
+
+    const cases = [
+      {
+        name: 'create_flow',
+        value: { id: 'f1', label: 'New Flow', nodes: [] },
+        setup: () => {
+          vi.mocked(mockClient.createFlow).mockResolvedValue({ id: 'f1' });
+        },
+        run: (flow: unknown) => createFlow(mockClient, { flow }),
+        expectCall: () =>
+          expect(mockClient.createFlow).toHaveBeenCalledWith({
+            id: 'f1',
+            label: 'New Flow',
+            nodes: [],
+          }),
+      },
+      {
+        name: 'update_flow',
+        value: { label: 'New Label', nodes: [] },
+        setup: () => {
+          vi.mocked(mockClient.updateFlow).mockResolvedValue({ id: 'f1' });
+        },
+        run: (updates: unknown) => updateFlow(mockClient, { flowId: 'f1', updates }),
+        expectCall: () =>
+          expect(mockClient.updateFlow).toHaveBeenCalledWith('f1', {
+            id: 'f1',
+            label: 'New Label',
+            nodes: [],
+          }),
+      },
+      {
+        name: 'validate_flow',
+        value: { id: 'f1', label: 'New Flow', nodes: [] },
+        setup: () => {
+          vi.mocked(mockClient.validateFlow).mockResolvedValue({ valid: true });
+        },
+        run: (flow: unknown) => validateFlow(mockClient, { flow }),
+        expectCall: () =>
+          expect(mockClient.validateFlow).toHaveBeenCalledWith({
+            id: 'f1',
+            label: 'New Flow',
+            nodes: [],
+          }),
+      },
+      {
+        name: 'create_subflow',
+        value: { id: 'sf2', type: 'subflow', name: 'My Subflow', nodes: [] },
+        setup: () => {
+          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
+          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+        },
+        run: (subflow: unknown) => createSubflow(mockClient, { subflow }),
+        expectCall: () =>
+          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+            expect.objectContaining({
+              subflows: expect.arrayContaining([expect.objectContaining({ id: 'sf2' })]),
+            })
+          ),
+      },
+      {
+        name: 'update_subflow',
+        value: { name: 'New Name' },
+        setup: () => {
+          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
+          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+        },
+        run: (updates: unknown) => updateSubflow(mockClient, { subflowId: 'sf1', updates }),
+        expectCall: () =>
+          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+            expect.objectContaining({
+              subflows: [expect.objectContaining({ id: 'sf1', name: 'New Name' })],
+            })
+          ),
+      },
+      {
+        name: 'create_global_config_node',
+        value: { id: 'cfg2', type: 'mqtt-broker', name: 'My Broker' },
+        setup: () => {
+          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
+          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+        },
+        run: (node: unknown) => createGlobalConfigNode(mockClient, { node }),
+        expectCall: () =>
+          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+            expect.objectContaining({
+              configs: expect.arrayContaining([expect.objectContaining({ id: 'cfg2' })]),
+            })
+          ),
+      },
+      {
+        name: 'update_global_config_node',
+        value: { id: 'cfg1', type: 'mqtt-broker', name: 'New Broker' },
+        setup: () => {
+          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue(globalFlow as any);
+          vi.mocked(mockClient.updateGlobalFlow).mockResolvedValue({ id: 'global' });
+        },
+        run: (node: unknown) => updateGlobalConfigNode(mockClient, { nodeId: 'cfg1', node }),
+        expectCall: () =>
+          expect(mockClient.updateGlobalFlow).toHaveBeenCalledWith(
+            expect.objectContaining({
+              configs: [expect.objectContaining({ id: 'cfg1', name: 'New Broker' })],
+            })
+          ),
+      },
+    ];
+
+    for (const testCase of cases) {
+      it(`${testCase.name} should accept an object`, async () => {
+        testCase.setup();
+
+        await testCase.run(testCase.value);
+
+        testCase.expectCall();
+      });
+
+      it(`${testCase.name} should accept the equivalent JSON string`, async () => {
+        testCase.setup();
+
+        await testCase.run(JSON.stringify(testCase.value));
+
+        testCase.expectCall();
+      });
+
+      it(`${testCase.name} should reject a number`, async () => {
+        testCase.setup();
+
+        await expect(testCase.run(42)).rejects.toThrow();
+      });
+    }
   });
 });

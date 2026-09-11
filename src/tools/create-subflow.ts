@@ -1,23 +1,17 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedSubflowSchema } from '../schemas.js';
+import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
 const CreateSubflowArgsSchema = z.object({
-  subflow: z.string(),
+  subflow: z.union([z.record(z.unknown()), z.string()]),
 });
 
 export async function createSubflow(client: NodeRedClient, args: unknown) {
   const parsed = CreateSubflowArgsSchema.parse(args);
 
-  let subflowData: unknown;
-  try {
-    subflowData = JSON.parse(parsed.subflow);
-  } catch (error) {
-    throw new Error(
-      `Invalid JSON in subflow parameter: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const subflowData = parseJsonArgument(parsed.subflow, 'subflow');
 
   const validated = NodeRedSubflowSchema.parse(subflowData);
 

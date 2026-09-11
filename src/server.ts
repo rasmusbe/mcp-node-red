@@ -22,6 +22,7 @@ import { getSettings } from './tools/get-settings.js';
 import { getSubflows } from './tools/get-subflows.js';
 import { installNode } from './tools/install-node.js';
 import { listFlows } from './tools/list-flows.js';
+import { patchFlow } from './tools/patch-flow.js';
 import { removeNodeModule } from './tools/remove-node-module.js';
 import { textResult } from './tools/result.js';
 import { setDebugState } from './tools/set-debug-state.js';
@@ -81,13 +82,28 @@ export function createServer() {
       {
         name: 'get_flow',
         description:
-          'Get a single flow tab by ID from Node-RED. Returns the full configuration including all nodes and config nodes for that flow.',
+          'Get a flow tab by ID with all its nodes and flow-scoped config nodes. nodeIds and types keep only matching nodes (either filter matches). summary reduces each node to id, type, name, group and wires, which is enough to understand structure but is NOT a valid input for update_flow; use patch_flow for changes.',
         inputSchema: {
           type: 'object',
           properties: {
             flowId: {
               type: 'string',
               description: 'ID of the flow tab to retrieve',
+            },
+            nodeIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Keep only nodes and config nodes with these ids.',
+            },
+            types: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Keep only nodes and config nodes of these types (e.g. "inject").',
+            },
+            summary: {
+              type: 'boolean',
+              description:
+                'Reduce each node to id, type, name, group and wires instead of its full configuration.',
             },
           },
           required: ['flowId'],
@@ -101,9 +117,9 @@ export function createServer() {
           type: 'object',
           properties: {
             flow: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string containing flow data with format: {id, label, nodes: [], configs: []}',
+                'Flow object: {id?, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
             },
           },
           required: ['flow'],
@@ -112,7 +128,7 @@ export function createServer() {
       {
         name: 'update_flow',
         description:
-          'Update a specific flow by ID using PUT /flow/:id. Only affects the specified flow, leaving all other flows untouched. Requires flow object with id, label, nodes array, and optional configs array.',
+          'Update a specific flow by ID using PUT /flow/:id. Only affects the specified flow, leaving all other flows untouched. Replaces the flow with what is sent, so the whole node list has to be included; use patch_flow to change part of an existing flow.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -121,12 +137,62 @@ export function createServer() {
               description: 'ID of the flow to update',
             },
             updates: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string containing flow update with format: {id, label, nodes: [], configs: []}',
+                'Flow object: {id, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
             },
           },
           required: ['flowId', 'updates'],
+        },
+      },
+      {
+        name: 'patch_flow',
+        description:
+          'Change part of a flow without resending it: remove, update (shallow merge by id) and add nodes and flow-scoped config nodes, and set label, disabled or info. Wires and group membership that point at removed nodes are cleaned up. Reads the flow, applies the changes and writes it back with PUT /flow/:id, so an editor deploy of the same flow between the read and the write is overwritten. Prefer this over update_flow for changes to an existing flow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            flowId: {
+              type: 'string',
+              description: 'ID of the flow to patch',
+            },
+            label: {
+              type: 'string',
+              description: 'New label for the flow tab.',
+            },
+            disabled: {
+              type: 'boolean',
+              description: 'Whether the flow tab is disabled.',
+            },
+            info: {
+              type: 'string',
+              description: 'New description text for the flow tab.',
+            },
+            removeNodeIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Ids of nodes or flow-scoped config nodes to remove from the flow.',
+            },
+            updateNodes: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'Node patches, each with the id of an existing node and the properties to merge into it; arrays such as wires are replaced whole.',
+            },
+            addNodes: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'Nodes to append to the flow, each with at least id and type; z is set to the flow id when missing.',
+            },
+            addConfigs: {
+              type: 'array',
+              items: { type: 'object' },
+              description:
+                'Flow-scoped config nodes to append, each with at least id and type; z is set to the flow id when missing.',
+            },
+          },
+          required: ['flowId'],
         },
       },
       {
@@ -137,9 +203,9 @@ export function createServer() {
           type: 'object',
           properties: {
             flow: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string containing flow data with format: {id, label, nodes: [], configs: []}',
+                'Flow object: {id, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
             },
           },
           required: ['flow'],
@@ -176,9 +242,9 @@ export function createServer() {
           type: 'object',
           properties: {
             subflow: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string with subflow data: {id, type: "subflow", name, in: [], out: [], nodes: [], configs: []}',
+                'Subflow object: {id, type: "subflow", name, in: [], out: [], nodes: [], configs: []}. A JSON string with the same content is also accepted.',
             },
           },
           required: ['subflow'],
@@ -196,9 +262,9 @@ export function createServer() {
               description: 'ID of the subflow to update',
             },
             updates: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string with fields to update: {name, in, out, nodes, configs, env, ...}',
+                'Object with the fields to update: {name, in, out, nodes, configs, env, ...}. A JSON string with the same content is also accepted.',
             },
           },
           required: ['subflowId', 'updates'],
@@ -227,9 +293,9 @@ export function createServer() {
           type: 'object',
           properties: {
             node: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string of the config node object with id, type, name, and type-specific fields. Must not include a z property.',
+                'Config node object with id, type, name and type-specific fields. Must not include a z property. A JSON string with the same content is also accepted.',
             },
           },
           required: ['node'],
@@ -247,9 +313,9 @@ export function createServer() {
               description: 'ID of the global config node to update',
             },
             node: {
-              type: 'string',
+              type: 'object',
               description:
-                'JSON string with the replacement node object. Must not include a z property.',
+                'Replacement node object. Must not include a z property. A JSON string with the same content is also accepted.',
             },
           },
           required: ['nodeId', 'node'],
@@ -505,6 +571,8 @@ export function createServer() {
           return await createFlow(scoped, request.params.arguments);
         case 'update_flow':
           return await updateFlow(scoped, request.params.arguments);
+        case 'patch_flow':
+          return await patchFlow(scoped, request.params.arguments);
         case 'validate_flow':
           return await validateFlow(scoped, request.params.arguments);
         case 'delete_flow':

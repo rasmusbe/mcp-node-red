@@ -1,24 +1,18 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { UpdateFlowRequestSchema } from '../schemas.js';
+import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
 const UpdateFlowArgsSchema = z.object({
   flowId: z.string(),
-  updates: z.string(),
+  updates: z.union([z.record(z.unknown()), z.string()]),
 });
 
 export async function updateFlow(client: NodeRedClient, args: unknown) {
   const parsed = UpdateFlowArgsSchema.parse(args);
 
-  let flowData: unknown;
-  try {
-    flowData = JSON.parse(parsed.updates);
-  } catch (error) {
-    throw new Error(
-      `Invalid JSON in updates parameter: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const flowData = parseJsonArgument(parsed.updates, 'updates');
 
   // Ensure id matches flowId parameter
   const updateData = {

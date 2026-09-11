@@ -65,6 +65,22 @@ export const NodeRedGlobalFlowResponseSchema = z.object({
   subflows: z.array(NodeRedSubflowSchema).optional(),
 });
 
+/**
+ * What GET /flow/:id answers for a tab. Node-RED omits nodes or configs when a flow has none,
+ * so both default to an empty array and callers can read them without a presence check.
+ */
+export const FlowResponseSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().optional(),
+    disabled: z.boolean().optional(),
+    info: z.string().optional(),
+    env: z.array(z.unknown()).optional(),
+    nodes: z.array(NodeRedNodeSchema).default([]),
+    configs: z.array(NodeRedConfigSchema).default([]),
+  })
+  .passthrough();
+
 export const UpdateFlowRequestSchema = z
   .object({
     id: z.string(),
@@ -152,6 +168,7 @@ export type NodeRedSubflow = z.infer<typeof NodeRedSubflowSchema>;
 export type NodeRedItem = z.infer<typeof NodeRedItemSchema>;
 export type NodeRedGlobalFlowResponse = z.infer<typeof NodeRedGlobalFlowResponseSchema>;
 export type NodeRedFlowsResponse = z.infer<typeof NodeRedFlowsResponseSchema>;
+export type FlowResponse = z.infer<typeof FlowResponseSchema>;
 export type UpdateFlowRequest = z.infer<typeof UpdateFlowRequestSchema>;
 export type CreateFlowRequest = z.infer<typeof CreateFlowRequestSchema>;
 export type FlowState = z.infer<typeof FlowStateSchema>;

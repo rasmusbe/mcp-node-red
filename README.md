@@ -1,6 +1,6 @@
 # Node-RED MCP Server
 
-MCP server for Node-RED workflow management. Provides AI assistants with 26 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
+MCP server for Node-RED workflow management. Provides AI assistants with 27 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
 
 ## Installation
 
@@ -146,9 +146,10 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 
 ### Flow Management
 - **list_flows**: List flow tabs (id, label, type) without pulling every node
-- **get_flow**: Retrieve a single flow's full configuration by ID
+- **get_flow**: Retrieve a flow by ID, with optional `nodeIds` and `types` filters and a `summary` mode that keeps only structure
 - **create_flow**: Create new flows via POST /flow
-- **update_flow**: Update individual flows safely via PUT /flow/:id
+- **update_flow**: Replace a whole flow safely via PUT /flow/:id
+- **patch_flow**: Change part of a flow: add, update and remove nodes and flow-scoped config nodes without resending the rest
 - **validate_flow**: Validate flow configuration without deploying
 - **delete_flow**: Delete a flow and all its nodes by ID
 

@@ -1,24 +1,18 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedSubflowSchema } from '../schemas.js';
+import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
 const UpdateSubflowArgsSchema = z.object({
   subflowId: z.string(),
-  updates: z.string(),
+  updates: z.union([z.record(z.unknown()), z.string()]),
 });
 
 export async function updateSubflow(client: NodeRedClient, args: unknown) {
   const parsed = UpdateSubflowArgsSchema.parse(args);
 
-  let updateData: unknown;
-  try {
-    updateData = JSON.parse(parsed.updates);
-  } catch (error) {
-    throw new Error(
-      `Invalid JSON in updates parameter: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const updateData = parseJsonArgument(parsed.updates, 'updates');
 
   const globalFlow = await client.getGlobalFlow();
   const subflows = globalFlow.subflows ?? [];

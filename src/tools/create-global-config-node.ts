@@ -1,23 +1,17 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedNodeSchema } from '../schemas.js';
+import { parseJsonArgument } from './json-argument.js';
 import { textResult } from './result.js';
 
 const CreateGlobalConfigNodeArgsSchema = z.object({
-  node: z.string(),
+  node: z.union([z.record(z.unknown()), z.string()]),
 });
 
 export async function createGlobalConfigNode(client: NodeRedClient, args: unknown) {
   const parsed = CreateGlobalConfigNodeArgsSchema.parse(args);
 
-  let nodeData: unknown;
-  try {
-    nodeData = JSON.parse(parsed.node);
-  } catch (error) {
-    throw new Error(
-      `Invalid JSON in node parameter: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const nodeData = parseJsonArgument(parsed.node, 'node');
 
   const validated = NodeRedNodeSchema.parse(nodeData);
 

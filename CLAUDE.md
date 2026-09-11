@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCP (Model Context Protocol) server that provides Node-RED workflow management capabilities via stdio transport. Exposes 17 tools for AI agents to interact with Node-RED Admin API v2, covering flow management, runtime control, node module management, context store operations, runtime info, and node interaction.
+MCP (Model Context Protocol) server that provides Node-RED workflow management capabilities via stdio transport. Exposes 27 tools for AI agents to interact with Node-RED Admin API v2, covering flow management, runtime control, node module management, context store operations, runtime info, and node interaction.
 
 ## Commands
 
@@ -41,7 +41,7 @@ npm run format
 **Server Layer** (`src/server.ts`):
 - Creates MCP server using `@modelcontextprotocol/sdk`
 - Reads config from env vars: `NODE_RED_URL` (required), `NODE_RED_TOKEN` (optional)
-- Registers 17 MCP tools with schemas across 6 categories: flow management, runtime control, node module management, context store, runtime info, and node interaction
+- Registers 27 MCP tools with schemas across 6 categories: flow management, runtime control, node module management, context store, runtime info, and node interaction
 - Routes tool calls to individual tool handlers
 - Catches errors and returns MCP-formatted error responses
 
@@ -57,7 +57,7 @@ npm run format
 - Each tool is a standalone async function
 - Takes `NodeRedClient` instance and tool arguments
 - Returns MCP tool response format: `{ content: [{ type: 'text', text: '...' }] }`
-- Flow management: `list-flows.ts` (GET /flows, tabs only), `get-flow.ts` (GET /flow/:id), `create-flow.ts` (POST /flow), `update-flow.ts` (PUT /flow/:id), `validate-flow.ts`, `delete-flow.ts` (DELETE /flow/:id)
+- Flow management: `list-flows.ts` (GET /flows, tabs only), `get-flow.ts` (GET /flow/:id), `create-flow.ts` (POST /flow), `update-flow.ts` (PUT /flow/:id), `patch-flow.ts` (PUT /flow/:id after a GET), `validate-flow.ts`, `delete-flow.ts` (DELETE /flow/:id)
 - Runtime control: `get-flow-state.ts` (GET /flows/state), `set-flow-state.ts` (POST /flows/state)
 - Node modules: `get-nodes.ts` (GET /nodes), `install-node.ts` (POST /nodes), `set-node-module-state.ts` (PUT /nodes/:module), `remove-node-module.ts` (DELETE /nodes/:module)
 - Context store: `get-context.ts` (GET /context/:scope), `delete-context.ts` (DELETE /context/:scope/:id/:key)
@@ -79,7 +79,7 @@ npm run format
 
 **Authentication Flexibility**: Supports both Bearer tokens (standalone Node-RED) and Basic auth (Home Assistant add-on).
 
-**JSON String Parameters**: MCP tool parameters receive flows as JSON strings, not objects. Tools parse and validate them.
+**Object Parameters**: flow, subflow and config node arguments are objects. A JSON string with the same content is still accepted for older clients.
 
 **Individual Flow Updates**: Uses PUT /flow/:id to update one flow at a time, preventing accidental destruction of other flows.
 
@@ -203,7 +203,7 @@ The MCP server uses `PUT /flow/:id` which:
 
 - NEVER use `curl` to call Node-RED API directly
 - NEVER use Bash to make HTTP requests to Node-RED
-- ALWAYS use the MCP tools: `list_flows`, `get_flow`, `create_flow`, `update_flow`, `validate_flow`, `delete_flow`, `get_flow_state`, `set_flow_state`, `get_nodes`, `install_node`, `set_node_module_state`, `remove_node_module`, `get_context`, `delete_context`, `get_settings`, `get_diagnostics`, `trigger_inject`, `set_debug_state`
+- ALWAYS use the MCP tools: `list_flows`, `get_flow`, `create_flow`, `update_flow`, `patch_flow`, `validate_flow`, `delete_flow`, `get_flow_state`, `set_flow_state`, `get_nodes`, `install_node`, `set_node_module_state`, `remove_node_module`, `get_context`, `delete_context`, `get_settings`, `get_diagnostics`, `trigger_inject`, `set_debug_state`
 
 The entire purpose of this MCP server is to provide safe, validated access to Node-RED through MCP tools. Bypassing them defeats the purpose and removes safety checks.
 

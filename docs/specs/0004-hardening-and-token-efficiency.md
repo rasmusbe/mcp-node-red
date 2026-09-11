@@ -34,9 +34,9 @@ the network or the caller misbehaves, and how much of the context window a call 
 
 ### Batch 3, token usage (large)
 
-- [ ] `patch_flow` tool for partial flow updates (add, replace, remove nodes, label, disabled)
-- [ ] `get_flow` selection parameters (`nodeIds`, `types`, `summary`)
-- [ ] Flow, subflow and config node parameters accepted as objects, strings still tolerated
+- [x] `patch_flow` tool for partial flow updates (add, replace, remove nodes, label, disabled)
+- [x] `get_flow` selection parameters (`nodeIds`, `types`, `summary`)
+- [x] Flow, subflow and config node parameters accepted as objects, strings still tolerated
 
 ### Batch 4, schema and speed
 
@@ -108,6 +108,42 @@ module also lists `disabledSets`, while a fully disabled one needs nothing beyon
 grouping reads the response through a small local schema, because `NodeModuleSchema` describes a
 different shape and only accepts these entries through `.passthrough()`. `client.getNodes()` is
 unchanged, since `get_node_help` resolves types against the flat list.
+
+## Design (batch 3)
+
+**patch_flow.** `update_flow` replaces the flow with what is sent, so changing one property of
+one node means echoing all 39,423 characters of a 59 node tab back, about 11,000 output tokens
+for a one line change. `patch_flow` sends only the difference: `removeNodeIds`, `updateNodes`
+(shallow merge by id, so an array such as `wires` is replaced whole), `addNodes`, `addConfigs`
+and the tab's own `label`, `disabled` and `info`. It reads the flow with `FlowResponseSchema`,
+applies remove, update and add in that order, and writes the merged flow back with
+`PUT /flow/:id`; the merged result is validated before the write, for the same reason
+`update_subflow` validates its merge. An unknown id on remove or update, a duplicate id on add
+and a patch that requests no change are all errors, because each of them means the caller
+believes something about the flow that is not true. Removals also rewrite the references the
+removed nodes leave behind: ids disappear from every remaining `wires` array and from the
+`nodes` list of remaining group nodes, and a `g` pointing at a removed group is dropped. Node-RED
+accepts those dangling references and the editor then draws broken wires. The read and the write
+are two requests, so an editor deploy between them is overwritten, which the tool description
+says.
+
+**get_flow selection.** Reading a tab to find one node cost the whole tab. `nodeIds` and `types`
+keep a node or flow-scoped config node when either filter matches it, and add `totalNodes` and
+`totalConfigs` so a filtered read cannot be mistaken for a small flow. `summary` reduces each
+node to `id`, `type`, `name`, `g` and `wires`, dropping the coordinates and the per-node
+configuration that are most of the characters, and each config node to `id`, `type` and `name`;
+`wires` is omitted when it is missing or all ports are empty. A summary is not a valid input for
+`update_flow`, which is why the description points at `patch_flow` instead. With none of the
+three options the response is byte for byte what it was, straight from the client without a
+parse, so an unusual flow cannot start failing on a schema.
+
+**Object parameters.** The seven tools that took a flow, subflow or config node took it as a
+JSON string, which costs about 16 percent in escaping and invites double-escaped output where a
+single misplaced quote fails the call. Their arguments are now `z.union([z.record(z.unknown()),
+z.string()])` and go through `parseJsonArgument`, which returns an object unchanged and parses a
+string with the error text the tools used before, so clients that learned the old signature keep
+working. `validate_flow` still answers `{valid: false, errors: [...]}` for a string it cannot
+parse rather than failing the call, since an unparseable flow is exactly what it reports on.
 
 ## References
 

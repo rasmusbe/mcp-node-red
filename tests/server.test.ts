@@ -76,6 +76,7 @@ describe('MCP Server', () => {
     expect(toolNames).toContain('get_flow');
     expect(toolNames).toContain('create_flow');
     expect(toolNames).toContain('update_flow');
+    expect(toolNames).toContain('patch_flow');
     expect(toolNames).toContain('validate_flow');
     expect(toolNames).toContain('delete_flow');
     expect(toolNames).toContain('get_node_help');
