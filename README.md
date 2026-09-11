@@ -1,6 +1,6 @@
 # Node-RED MCP Server
 
-MCP server for Node-RED workflow management. Provides AI assistants with 18 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
+MCP server for Node-RED workflow management. Provides AI assistants with 26 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
 
 ## Installation
 
@@ -119,11 +119,25 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 ## Features
 
 ### Flow Management
-- **get_flows**: Retrieve all flows from your Node-RED instance
+- **list_flows**: List flow tabs (id, label, type) without pulling every node
+- **get_flow**: Retrieve a single flow's full configuration by ID
 - **create_flow**: Create new flows via POST /flow
 - **update_flow**: Update individual flows safely via PUT /flow/:id
 - **validate_flow**: Validate flow configuration without deploying
 - **delete_flow**: Delete a flow and all its nodes by ID
+
+### Subflows and Global Config Nodes
+- **get_subflows**: List all subflow definitions from the global flow
+- **create_subflow**: Add a subflow definition
+- **update_subflow**: Merge changes into an existing subflow definition
+- **delete_subflow**: Remove a subflow, refused while instances of it remain in flows
+- **create_global_config_node**: Add a config node available to all flows
+- **update_global_config_node**: Replace a global config node
+- **delete_global_config_node**: Remove a global config node, refused while it is referenced
+
+These seven rewrite the global flow through `PUT /flow/global`, which replaces every global
+config node and subflow with what is sent. A deploy from the editor in the same moment can be
+overwritten.
 
 ### Runtime Control
 - **get_flow_state**: Get runtime state of flows (started/stopped)
@@ -153,7 +167,7 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 Once configured, ask your AI assistant natural language questions:
 
 ```
-Get all flows from my Node-RED instance
+List the flow tabs in my Node-RED instance
 ```
 
 ```
