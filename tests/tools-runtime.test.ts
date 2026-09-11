@@ -72,7 +72,17 @@ describe('Runtime Info Tool Handlers', () => {
       const result = await getNodeHelp(mockClient, { module: 'node-red', set: 'inject' });
       expect(mockClient.getNodeConfig).toHaveBeenCalledWith('node-red', 'inject');
       expect(result.content).toHaveLength(1);
-      expect(result.content[0].text).toBe('## inject\n\n<p>Injects a message into a flow.</p>');
+      expect(result.content[0].text).toBe(
+        [
+          '## inject',
+          '',
+          '<p>Injects a message into a flow.</p>',
+          '',
+          '### Configurable properties',
+          '',
+          '- `name` (text)',
+        ].join('\n')
+      );
       expect(result.content[0].text).not.toContain('registerType');
     });
 

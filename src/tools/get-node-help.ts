@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
-import { extractNodeHelp } from '../node-help.js';
+import { type NodeArgument, extractNodeArguments, extractNodeHelp } from '../node-help.js';
 
 const GetNodeHelpArgsSchema = z.union([
   z.object({ type: z.string(), raw: z.boolean().optional() }),
@@ -73,6 +73,7 @@ export async function getNodeHelp(client: NodeRedClient, args: unknown) {
   const blocks = extractNodeHelp(config);
   const requested = 'type' in parsed ? blocks.filter((b) => b.type === parsed.type) : [];
   const selected = requested.length > 0 ? requested : blocks;
+  const argumentsByType = extractNodeArguments(config);
 
   if (selected.length === 0) {
     return asToolResult(
@@ -80,5 +81,32 @@ export async function getNodeHelp(client: NodeRedClient, args: unknown) {
     );
   }
 
-  return asToolResult(selected.map((b) => `## ${b.type}\n\n${b.help}`).join('\n\n'));
+  const sections = selected.map((block) => {
+    const args = argumentsByType.get(block.type) ?? [];
+    return [`## ${block.type}`, '', block.help, '', renderArguments(args)].join('\n').trimEnd();
+  });
+
+  return asToolResult(sections.join('\n\n'));
+}
+
+/**
+ * The properties come from the edit dialog, so they are what create_flow and update_flow can
+ * actually set on the node. Rendered as a list rather than JSON to keep it readable next to the
+ * help HTML above it.
+ */
+function renderArguments(args: NodeArgument[]): string {
+  if (args.length === 0) {
+    return '';
+  }
+
+  const lines = args.map((arg) => {
+    const details = [arg.inputType];
+    if (arg.options) details.push(`one of: ${arg.options.map((o) => `"${o}"`).join(', ')}`);
+    if (arg.label) details.push(`labelled "${arg.label}"`);
+    if (arg.placeholder) details.push(`example: ${arg.placeholder}`);
+    if (arg.description) details.push(arg.description);
+    return `- \`${arg.name}\` (${details.join('; ')})`;
+  });
+
+  return ['### Configurable properties', '', ...lines].join('\n');
 }
