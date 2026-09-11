@@ -49,6 +49,26 @@ Restart Claude Desktop to load the server.
 
 - `NODE_RED_URL` (required): Your Node-RED instance URL
 - `NODE_RED_TOKEN` (optional): API token for authentication
+- `MCP_TRANSPORT` (optional): `stdio` (default) or `streamable-http`
+- `MCP_HOST`, `MCP_PORT`, `MCP_PATH` (optional): where the HTTP transport listens, default
+  `127.0.0.1:3000/mcp`
+- `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS` (optional): comma-separated header values the HTTP
+  transport accepts
+
+## Transports
+
+By default the server speaks JSON-RPC over stdio, which is what most MCP clients launch.
+
+Set `MCP_TRANSPORT=streamable-http` to listen over HTTP instead:
+
+```bash
+MCP_TRANSPORT=streamable-http MCP_PORT=3000 npx mcp-node-red
+```
+
+Each request gets its own server instance, so there is no session state to keep. The listener
+binds to `127.0.0.1` and checks the `Host` header, because it carries your Node-RED credentials
+and a page open in your browser can reach a loopback port. Serving it anywhere but loopback means
+setting `MCP_ALLOWED_HOSTS` yourself, and putting authentication in front of it.
 
 ### Environment Files
 

@@ -1,5 +1,4 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { NodeRedClient } from './client.js';
 import { ConfigSchema } from './schemas.js';
@@ -552,10 +551,4 @@ export function createServer() {
   });
 
   return server;
-}
-
-export async function runServer() {
-  const server = createServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
 }

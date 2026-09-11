@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { loadEnv } from './env.js';
-import { runServer } from './server.js';
+import { runServer } from './runtime.js';
 
 loadEnv();
 
