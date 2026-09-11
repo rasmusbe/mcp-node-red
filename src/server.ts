@@ -10,6 +10,7 @@ import { getContext } from './tools/get-context.js';
 import { getDiagnostics } from './tools/get-diagnostics.js';
 import { getFlowState } from './tools/get-flow-state.js';
 import { getFlows } from './tools/get-flows.js';
+import { getNodeHelp } from './tools/get-node-help.js';
 import { getNodes } from './tools/get-nodes.js';
 import { getSettings } from './tools/get-settings.js';
 import { installNode } from './tools/install-node.js';
@@ -215,6 +216,35 @@ export function createServer() {
         },
       },
       {
+        name: 'get_node_help',
+        description:
+          'Get the documentation for a node type: the same help shown in the Node-RED editor info sidebar. Pass "type" with a node type as it appears in a flow (e.g. "inject", "mqtt in") and it is resolved to its module and set, or pass "module" and "set" directly. Set "raw" to get the full node config HTML including the edit dialog and editor JavaScript.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              description:
+                'Node type as used in flows (e.g. "inject", "mqtt in"). Resolved to a module and set via the installed node list.',
+            },
+            module: {
+              type: 'string',
+              description:
+                'Node module name (e.g. "node-red", "node-red-contrib-zigbee2mqtt"). Use together with "set" instead of "type".',
+            },
+            set: {
+              type: 'string',
+              description: 'Node set name within the module (e.g. "inject", "zigbee2mqtt-in")',
+            },
+            raw: {
+              type: 'boolean',
+              description:
+                'Return the full node config HTML instead of just the help section. Defaults to false.',
+            },
+          },
+        },
+      },
+      {
         name: 'install_node',
         description: 'Install a new node module into Node-RED. Installs from the npm registry.',
         inputSchema: {
@@ -339,6 +369,8 @@ export function createServer() {
           return await deleteContext(client, request.params.arguments);
         case 'get_nodes':
           return await getNodes(client);
+        case 'get_node_help':
+          return await getNodeHelp(client, request.params.arguments);
         case 'install_node':
           return await installNode(client, request.params.arguments);
         case 'set_node_module_state':

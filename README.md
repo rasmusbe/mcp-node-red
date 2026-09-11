@@ -1,6 +1,6 @@
 # Node-RED MCP Server
 
-MCP server for Node-RED workflow management. Provides AI assistants with 17 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
+MCP server for Node-RED workflow management. Provides AI assistants with 18 tools to manage flows, node modules, context stores, and runtime settings through the Node-RED Admin API v2.
 
 ## Installation
 
@@ -131,6 +131,7 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 
 ### Node Module Management
 - **get_nodes**: List all installed node modules with versions and status
+- **get_node_help**: Get the documentation for a node type, the same help shown in the editor info sidebar
 - **install_node**: Install a node module from the npm registry
 - **set_node_module_state**: Enable or disable an installed node module
 - **remove_node_module**: Uninstall a node module from Node-RED
@@ -169,6 +170,10 @@ Delete the flow with ID "flow1"
 
 ```
 What node modules are installed?
+```
+
+```
+Show me the help for the inject node
 ```
 
 ```

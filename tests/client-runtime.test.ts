@@ -108,4 +108,72 @@ describe('NodeRedClient - Runtime Info', () => {
       expect(result).toEqual(diagnosticsWithExtras);
     });
   });
+  describe('getNodeConfig', () => {
+    it('should fetch node config HTML with the text/html accept header', async () => {
+      const mockHtml = '<script type="text/html" data-help-name="inject"><p>Help.</p></script>';
+
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { text: vi.fn().mockResolvedValue(mockHtml) },
+      } as any);
+
+      const result = await client.getNodeConfig('node-red', 'inject');
+      expect(result).toBe(mockHtml);
+      expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes/node-red/inject', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Node-RED-API-Version': 'v2',
+          Authorization: 'Bearer test-token',
+          Accept: 'text/html',
+        },
+      });
+    });
+
+    it('should keep the scope separator of a scoped module as a literal slash', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { text: vi.fn().mockResolvedValue('') },
+      } as any);
+
+      await client.getNodeConfig('@scope/node-red-contrib-foo', 'foo-node');
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/nodes/@scope/node-red-contrib-foo/foo-node',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should percent-encode characters that would break the path', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { text: vi.fn().mockResolvedValue('') },
+      } as any);
+
+      await client.getNodeConfig('node-red', 'weird?set#name');
+      expect(request).toHaveBeenCalledWith(
+        'http://localhost:1880/nodes/node-red/weird%3Fset%23name',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('should throw error on 404', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 404,
+        body: { text: vi.fn().mockResolvedValue('Not Found') },
+      } as any);
+      await expect(client.getNodeConfig('nonexistent', 'nonexistent')).rejects.toThrow(
+        'Failed to get node config: 404'
+      );
+    });
+
+    it('should throw error on 401', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 401,
+        body: { text: vi.fn().mockResolvedValue('Unauthorized') },
+      } as any);
+      await expect(client.getNodeConfig('node-red', 'inject')).rejects.toThrow(
+        'Failed to get node config: 401'
+      );
+    });
+  });
 });

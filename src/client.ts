@@ -17,6 +17,22 @@ import {
   NodeRedSettingsSchema,
 } from './schemas.js';
 
+/**
+ * Build the path segments for /nodes/:module/:set.
+ *
+ * Node-RED routes this endpoint with /^\/nodes\/((@[^\/]+\/)?[^\/]+)\/([^\/]+)$/, so the
+ * separator in a scoped module name has to arrive as a literal slash and the leading @ has to
+ * stay unencoded. Running encodeURIComponent over the whole string turns those into %2F and
+ * %40: Express decodes them again, but Apache rejects encoded slashes by default and several
+ * proxies rewrite them, so encode per segment instead and leave @ alone.
+ */
+function encodeNodePath(value: string): string {
+  return value
+    .split('/')
+    .map((segment) => encodeURIComponent(segment).replace(/%40/g, '@'))
+    .join('/');
+}
+
 export class NodeRedClient {
   private readonly baseUrl: string;
   private readonly token?: string;
@@ -317,6 +333,30 @@ export class NodeRedClient {
 
     const data = await response.body.json();
     return z.array(NodeModuleSchema).parse(data);
+  }
+
+  /**
+   * Fetch the editor config HTML for a node set: the node's own .html file (edit dialog plus
+   * editor JavaScript) with the localised help appended. Callers that only want the help
+   * should run it through extractNodeHelp.
+   */
+  async getNodeConfig(module: string, set: string): Promise<string> {
+    const headers = this.getHeaders();
+    headers.Accept = 'text/html';
+    const response = await request(
+      `${this.baseUrl}/nodes/${encodeNodePath(module)}/${encodeNodePath(set)}`,
+      {
+        method: 'GET',
+        headers,
+      }
+    );
+
+    if (response.statusCode !== 200) {
+      const body = await response.body.text();
+      throw new Error(`Failed to get node config: ${response.statusCode}\n${body}`);
+    }
+
+    return await response.body.text();
   }
 
   async installNode(module: string): Promise<NodeModule> {
