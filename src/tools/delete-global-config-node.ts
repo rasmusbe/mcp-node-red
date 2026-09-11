@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import type { NodeRedItem } from '../schemas.js';
+import { textResult } from './result.js';
 
 const DeleteGlobalConfigNodeArgsSchema = z.object({
   nodeId: z.string(),
@@ -58,12 +59,5 @@ export async function deleteGlobalConfigNode(client: NodeRedClient, args: unknow
     configs: configs.filter((c) => c.id !== parsed.nodeId),
   });
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ deleted: parsed.nodeId }, null, 2),
-      },
-    ],
-  };
+  return textResult({ deleted: parsed.nodeId });
 }

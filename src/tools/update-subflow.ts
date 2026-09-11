@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedSubflowSchema } from '../schemas.js';
+import { textResult } from './result.js';
 
 const UpdateSubflowArgsSchema = z.object({
   subflowId: z.string(),
@@ -42,12 +43,5 @@ export async function updateSubflow(client: NodeRedClient, args: unknown) {
 
   await client.updateGlobalFlow({ ...globalFlow, subflows: updatedSubflows });
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ id: parsed.subflowId }, null, 2),
-      },
-    ],
-  };
+  return textResult({ id: parsed.subflowId });
 }

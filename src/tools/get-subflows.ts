@@ -1,14 +1,8 @@
 import type { NodeRedClient } from '../client.js';
+import { textResult } from './result.js';
 
 export async function getSubflows(client: NodeRedClient) {
   const globalFlow = await client.getGlobalFlow();
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(globalFlow.subflows ?? [], null, 2),
-      },
-    ],
-  };
+  return textResult(globalFlow.subflows ?? []);
 }

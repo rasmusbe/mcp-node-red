@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedNodeSchema } from '../schemas.js';
+import { textResult } from './result.js';
 
 const CreateGlobalConfigNodeArgsSchema = z.object({
   node: z.string(),
@@ -35,12 +36,5 @@ export async function createGlobalConfigNode(client: NodeRedClient, args: unknow
 
   await client.updateGlobalFlow({ ...globalFlow, configs: [...configs, validated] });
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ id: validated.id }, null, 2),
-      },
-    ],
-  };
+  return textResult({ id: validated.id });
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { CreateFlowRequestSchema } from '../schemas.js';
+import { textResult } from './result.js';
 
 const CreateFlowArgsSchema = z.object({
   flow: z.string(),
@@ -22,12 +23,5 @@ export async function createFlow(client: NodeRedClient, args: unknown) {
 
   const result = await client.createFlow(validated);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(result, null, 2),
-      },
-    ],
-  };
+  return textResult(result);
 }

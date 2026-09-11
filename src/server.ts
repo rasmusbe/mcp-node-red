@@ -1,7 +1,9 @@
 import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ZodError } from 'zod';
 import { NodeRedClient } from './client.js';
+import { formatZodError } from './errors.js';
 import { ConfigSchema } from './schemas.js';
 import { createFlow } from './tools/create-flow.js';
 import { createGlobalConfigNode } from './tools/create-global-config-node.js';
@@ -21,6 +23,7 @@ import { getSubflows } from './tools/get-subflows.js';
 import { installNode } from './tools/install-node.js';
 import { listFlows } from './tools/list-flows.js';
 import { removeNodeModule } from './tools/remove-node-module.js';
+import { textResult } from './tools/result.js';
 import { setDebugState } from './tools/set-debug-state.js';
 import { setFlowState } from './tools/set-flow-state.js';
 import { setNodeModuleState } from './tools/set-node-module-state.js';
@@ -350,7 +353,7 @@ export function createServer() {
       {
         name: 'get_nodes',
         description:
-          'Get all installed node modules from Node-RED. Returns array of node module objects with their node sets.',
+          'List installed node modules, grouped per module with version, enabled state and the node types each node set registers. Use get_node_help for the documentation of a type.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -550,15 +553,12 @@ export function createServer() {
           throw new Error(`Unknown tool: ${request.params.name}`);
       }
     } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-      };
+      const text =
+        error instanceof ZodError
+          ? formatZodError(request.params.name, error)
+          : `Error: ${error instanceof Error ? error.message : String(error)}`;
+
+      return { ...textResult(text), isError: true };
     }
   });
 

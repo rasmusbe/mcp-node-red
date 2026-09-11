@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
+import { textResult } from './result.js';
 
 const GetContextArgsSchema = z.object({
   scope: z.enum(['global', 'flow', 'node']),
@@ -17,12 +18,5 @@ export async function getContext(client: NodeRedClient, args: unknown) {
 
   const result = await client.getContext(parsed.scope, parsed.id, parsed.key, parsed.store);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(result, null, 2),
-      },
-    ],
-  };
+  return textResult(result);
 }

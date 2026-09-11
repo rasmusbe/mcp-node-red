@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { type NodeArgument, extractNodeArguments, extractNodeHelp } from '../node-help.js';
+import { textResult } from './result.js';
 
 const GetNodeHelpArgsSchema = z.union([
   z.object({ type: z.string(), raw: z.boolean().optional() }),
@@ -44,17 +45,6 @@ async function resolveType(client: NodeRedClient, type: string): Promise<NodeSet
   return { module: match.id.slice(0, separator), set: match.id.slice(separator + 1) };
 }
 
-function asToolResult(text: string) {
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text,
-      },
-    ],
-  };
-}
-
 export async function getNodeHelp(client: NodeRedClient, args: unknown) {
   const parsed = GetNodeHelpArgsSchema.parse(args);
   const target =
@@ -65,7 +55,7 @@ export async function getNodeHelp(client: NodeRedClient, args: unknown) {
   const config = await client.getNodeConfig(target.module, target.set);
 
   if (parsed.raw) {
-    return asToolResult(config);
+    return textResult(config);
   }
 
   // A node set can register several types, so keep only the one that was asked for when the
@@ -76,7 +66,7 @@ export async function getNodeHelp(client: NodeRedClient, args: unknown) {
   const argumentsByType = extractNodeArguments(config);
 
   if (selected.length === 0) {
-    return asToolResult(
+    return textResult(
       `No help section found for ${target.module}/${target.set}. Raw node config HTML follows.\n\n${config}`
     );
   }
@@ -86,7 +76,7 @@ export async function getNodeHelp(client: NodeRedClient, args: unknown) {
     return [`## ${block.type}`, '', block.help, '', renderArguments(args)].join('\n').trimEnd();
   });
 
-  return asToolResult(sections.join('\n\n'));
+  return textResult(sections.join('\n\n'));
 }
 
 /**

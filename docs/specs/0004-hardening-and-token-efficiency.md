@@ -28,9 +28,9 @@ the network or the caller misbehaves, and how much of the context window a call 
 
 ### Batch 2, token usage (small)
 
-- [ ] Compact JSON in all tool responses via one shared helper
-- [ ] Zod validation errors rendered one line per issue
-- [ ] `get_nodes` output grouped per module
+- [x] Compact JSON in all tool responses via one shared helper
+- [x] Zod validation errors rendered one line per issue
+- [x] `get_nodes` output grouped per module
 
 ### Batch 3, token usage (large)
 
@@ -83,6 +83,31 @@ that Node-RED's `/nodes/:module/:set` route requires for scoped packages.
 **Error bodies.** One `fail` helper reads the body once, prefers the `message` of a JSON
 `{code, message}` error, and otherwise collapses whitespace and caps the text at 500 characters.
 Behind an ingress or proxy the body is often a full HTML page.
+
+## Design (batch 2)
+
+**Compact JSON.** Every tool built its own `{content: [{type, text}]}` envelope around
+`JSON.stringify(value, null, 2)`. `textResult` in `src/tools/result.ts` is now the only place
+that shape exists, and it drops the indentation: a tab with 59 nodes goes from 60,228 to 39,423
+characters. Strings pass through untouched, so `get_node_help` uses the same helper for its
+markdown instead of a local copy.
+
+**Zod errors.** A `ZodError` stringifies to a pretty-printed JSON array, so one missing argument
+reached the model as eleven lines. `formatZodError` in `src/errors.ts` renders a header naming
+the tool and one `path: message` line per issue, with an empty path shown as `(root)`. A union
+reports only "Invalid input" at the top level and keeps the real reasons in `unionErrors`, so
+those are flattened in and de-duplicated, which is what makes `get_node_help`'s two argument
+shapes readable. The `catch` in the call handler picks the format; other errors keep
+`Error: <message>`.
+
+**get_nodes grouping.** `GET /nodes` returns one entry per node set and repeats module, version,
+local, user and enabled on each of the 48 entries a default install has. The tool groups them by
+module in order of first appearance, keeps the module fields once, and maps each set name to its
+de-duplicated types. A module is `enabled` only when all of its sets are; a partly disabled
+module also lists `disabledSets`, while a fully disabled one needs nothing beyond the flag. The
+grouping reads the response through a small local schema, because `NodeModuleSchema` describes a
+different shape and only accepts these entries through `.passthrough()`. `client.getNodes()` is
+unchanged, since `get_node_help` resolves types against the flat list.
 
 ## References
 

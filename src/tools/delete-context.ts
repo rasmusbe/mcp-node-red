@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
+import { textResult } from './result.js';
 
 const DeleteContextArgsSchema = z.object({
   scope: z.enum(['global', 'flow', 'node']),
@@ -17,19 +18,8 @@ export async function deleteContext(client: NodeRedClient, args: unknown) {
 
   await client.deleteContext(parsed.scope, parsed.id, parsed.key, parsed.store);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(
-          {
-            success: true,
-            message: `Deleted context key "${parsed.key}" from ${parsed.scope} scope`,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return textResult({
+    success: true,
+    message: `Deleted context key "${parsed.key}" from ${parsed.scope} scope`,
+  });
 }

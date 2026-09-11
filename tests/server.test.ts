@@ -96,6 +96,23 @@ describe('MCP Server', () => {
     await server.close();
   });
 
+  it('should render a validation error as one line per issue', async () => {
+    process.env.NODE_RED_URL = 'http://localhost:1880';
+
+    const { client, server } = await connectedClient();
+
+    const result = (await client.callTool({ name: 'get_flow', arguments: {} })) as {
+      isError?: boolean;
+      content: { text: string }[];
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('Invalid input for get_flow:\n- flowId: Required');
+
+    await client.close();
+    await server.close();
+  });
+
   it('should pass the request signal down to the HTTP client', async () => {
     process.env.NODE_RED_URL = 'http://localhost:1880';
     vi.mocked(request).mockResolvedValue({

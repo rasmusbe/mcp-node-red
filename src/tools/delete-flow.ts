@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
+import { textResult } from './result.js';
 
 const DeleteFlowArgsSchema = z.object({
   flowId: z.string(),
@@ -10,12 +11,5 @@ export async function deleteFlow(client: NodeRedClient, args: unknown) {
 
   await client.deleteFlow(parsed.flowId);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ deleted: parsed.flowId }, null, 2),
-      },
-    ],
-  };
+  return textResult({ deleted: parsed.flowId });
 }

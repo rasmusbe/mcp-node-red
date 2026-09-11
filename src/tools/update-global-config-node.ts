@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedNodeSchema } from '../schemas.js';
+import { textResult } from './result.js';
 
 const UpdateGlobalConfigNodeArgsSchema = z.object({
   nodeId: z.string(),
@@ -39,12 +40,5 @@ export async function updateGlobalConfigNode(client: NodeRedClient, args: unknow
     configs: configs.map((c) => (c.id === parsed.nodeId ? validated : c)),
   });
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ id: validated.id }, null, 2),
-      },
-    ],
-  };
+  return textResult({ id: validated.id });
 }

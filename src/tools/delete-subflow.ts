@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import type { NodeRedItem } from '../schemas.js';
+import { textResult } from './result.js';
 
 const DeleteSubflowArgsSchema = z.object({
   subflowId: z.string(),
@@ -40,12 +41,5 @@ export async function deleteSubflow(client: NodeRedClient, args: unknown) {
 
   await client.updateGlobalFlow(updated);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ deleted: parsed.subflowId }, null, 2),
-      },
-    ],
-  };
+  return textResult({ deleted: parsed.subflowId });
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { NodeRedSubflowSchema } from '../schemas.js';
+import { textResult } from './result.js';
 
 const CreateSubflowArgsSchema = z.object({
   subflow: z.string(),
@@ -30,12 +31,5 @@ export async function createSubflow(client: NodeRedClient, args: unknown) {
   const updated = { ...globalFlow, subflows: [...subflows, validated] };
   await client.updateGlobalFlow(updated);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ id: validated.id }, null, 2),
-      },
-    ],
-  };
+  return textResult({ id: validated.id });
 }

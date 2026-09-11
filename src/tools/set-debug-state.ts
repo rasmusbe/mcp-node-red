@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
+import { textResult } from './result.js';
 
 const SetDebugStateArgsSchema = z.object({
   nodeId: z.string(),
@@ -11,12 +12,5 @@ export async function setDebugState(client: NodeRedClient, args: unknown) {
 
   await client.setDebugNodeState(parsed.nodeId, parsed.enabled);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({ nodeId: parsed.nodeId, enabled: parsed.enabled }, null, 2),
-      },
-    ],
-  };
+  return textResult({ nodeId: parsed.nodeId, enabled: parsed.enabled });
 }

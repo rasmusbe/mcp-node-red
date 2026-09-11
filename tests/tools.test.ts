@@ -15,6 +15,7 @@ import { getSubflows } from '../src/tools/get-subflows.js';
 import { installNode } from '../src/tools/install-node.js';
 import { listFlows } from '../src/tools/list-flows.js';
 import { removeNodeModule } from '../src/tools/remove-node-module.js';
+import { textResult } from '../src/tools/result.js';
 import { setDebugState } from '../src/tools/set-debug-state.js';
 import { setFlowState } from '../src/tools/set-flow-state.js';
 import { setNodeModuleState } from '../src/tools/set-node-module-state.js';
@@ -341,30 +342,113 @@ describe('Tool Handlers', () => {
   });
 
   describe('getNodes', () => {
-    it('should return formatted node modules', async () => {
-      const mockModules = [
-        {
-          name: 'node-red-contrib-example',
-          version: '1.0.0',
-          nodes: {
-            example: {
-              id: 'node-red-contrib-example/example',
-              name: 'example',
-              types: ['example-node'],
-              enabled: true,
-              module: 'node-red-contrib-example',
-            },
-          },
-        },
-      ];
+    const nodeSet = (overrides: Record<string, unknown>) => ({
+      enabled: true,
+      local: false,
+      user: false,
+      version: '5.0.6',
+      ...overrides,
+    });
 
-      vi.mocked(mockClient.getNodes).mockResolvedValue(mockModules);
+    it('should group node sets per module', async () => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue([
+        nodeSet({ id: 'node-red/inject', name: 'inject', types: ['inject'], module: 'node-red' }),
+        nodeSet({
+          id: 'node-red/link',
+          name: 'link',
+          types: ['link in', 'link out', 'link call'],
+          module: 'node-red',
+        }),
+        nodeSet({
+          id: 'node-red-contrib-foo/foo',
+          name: 'foo',
+          types: ['foo'],
+          module: 'node-red-contrib-foo',
+          version: '1.0.0',
+          local: true,
+          user: true,
+        }),
+      ] as any);
 
       const result = await getNodes(mockClient);
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
-      expect(JSON.parse(result.content[0].text)).toEqual(mockModules);
+      expect(JSON.parse(result.content[0].text)).toEqual([
+        {
+          module: 'node-red',
+          version: '5.0.6',
+          local: false,
+          user: false,
+          enabled: true,
+          sets: { inject: ['inject'], link: ['link in', 'link out', 'link call'] },
+        },
+        {
+          module: 'node-red-contrib-foo',
+          version: '1.0.0',
+          local: true,
+          user: true,
+          enabled: true,
+          sets: { foo: ['foo'] },
+        },
+      ]);
+    });
+
+    it('should de-duplicate the types a node set registers', async () => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue([
+        nodeSet({
+          id: 'node-red/switch',
+          name: 'switch',
+          types: ['switch', 'switch', 'switch'],
+          module: 'node-red',
+        }),
+      ] as any);
+
+      const result = await getNodes(mockClient);
+
+      expect(JSON.parse(result.content[0].text)[0].sets).toEqual({ switch: ['switch'] });
+    });
+
+    it('should name the disabled sets when a module is only partly enabled', async () => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue([
+        nodeSet({ id: 'm/one', name: 'one', types: ['one'], module: 'm' }),
+        nodeSet({ id: 'm/two', name: 'two', types: ['two'], module: 'm', enabled: false }),
+      ] as any);
+
+      const result = await getNodes(mockClient);
+
+      expect(JSON.parse(result.content[0].text)[0]).toMatchObject({
+        enabled: false,
+        disabledSets: ['two'],
+      });
+    });
+
+    it('should report a fully disabled module without listing every set', async () => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue([
+        nodeSet({ id: 'm/one', name: 'one', types: ['one'], module: 'm', enabled: false }),
+        nodeSet({ id: 'm/two', name: 'two', types: ['two'], module: 'm', enabled: false }),
+      ] as any);
+
+      const parsed = JSON.parse((await getNodes(mockClient)).content[0].text);
+
+      expect(parsed[0].enabled).toBe(false);
+      expect(parsed[0]).not.toHaveProperty('disabledSets');
+    });
+
+    it('should fall back to the id when a set carries no module', async () => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue([
+        { id: '@scope/node-red-contrib-bar/bar', name: 'bar', types: ['bar'], enabled: true },
+      ] as any);
+
+      const result = await getNodes(mockClient);
+
+      expect(JSON.parse(result.content[0].text)).toEqual([
+        {
+          module: '@scope/node-red-contrib-bar',
+          enabled: true,
+          sets: { bar: ['bar'] },
+        },
+      ]);
     });
 
     it('should handle empty modules list', async () => {
@@ -373,6 +457,18 @@ describe('Tool Handlers', () => {
       const result = await getNodes(mockClient);
 
       expect(JSON.parse(result.content[0].text)).toEqual([]);
+    });
+  });
+
+  describe('textResult', () => {
+    it('should pass a string through unchanged', () => {
+      expect(textResult('plain text').content[0].text).toBe('plain text');
+    });
+
+    it('should serialise anything else as compact JSON', () => {
+      expect(textResult({ id: 'f1', nodes: [{ id: 'n1' }] }).content[0].text).toBe(
+        '{"id":"f1","nodes":[{"id":"n1"}]}'
+      );
     });
   });
 

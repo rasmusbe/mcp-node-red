@@ -170,7 +170,7 @@ overwritten.
 - **set_flow_state**: Start or stop all flows in the runtime
 
 ### Node Module Management
-- **get_nodes**: List all installed node modules with versions and status
+- **get_nodes**: List installed node modules grouped per module, with version, enabled state and the node types each node set registers
 - **get_node_help**: Get the documentation for a node type, the same help shown in the editor info sidebar, plus the properties its edit dialog exposes and the values a select accepts
 - **install_node**: Install a node module from the npm registry
 - **set_node_module_state**: Enable or disable an installed node module
