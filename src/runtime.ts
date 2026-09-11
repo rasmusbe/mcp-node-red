@@ -6,7 +6,7 @@ import {
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createServer } from './server.js';
+import { createClient, createServer } from './server.js';
 
 /** Anything larger than this is not a JSON-RPC message, so read no further. */
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -111,6 +111,9 @@ export async function runStdioServer(): Promise<void> {
 export function createStreamableHttpRequestHandler(
   config: Pick<RuntimeConfig, 'path' | 'allowedHosts' | 'allowedOrigins'>
 ) {
+  // One client for every request this handler serves, so what it caches survives a request.
+  const client = createClient();
+
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const requestUrl = new URL(req.url ?? '/', 'http://localhost');
 
@@ -140,7 +143,7 @@ export function createStreamableHttpRequestHandler(
       return;
     }
 
-    const server = createServer();
+    const server = createServer({ client });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableDnsRebindingProtection: true,
@@ -174,15 +177,19 @@ export async function startStreamableHttpServer(
 ): Promise<StreamableHttpService> {
   const config = RuntimeConfigSchema.parse(runtimeConfig);
 
-  // Filled in once the listener is bound, because port 0 means the port is not known until then.
-  let allowedHosts = config.allowedHosts;
+  // allowedHosts is filled in once the listener is bound, because port 0 means the port is not
+  // known until then, so the handler reads it from an object that is completed in place rather
+  // than from a value captured at creation. The handler itself is built once, so every request
+  // shares the client it holds.
+  const handlerConfig = {
+    path: config.path,
+    allowedHosts: config.allowedHosts,
+    allowedOrigins: config.allowedOrigins,
+  };
+  const handleRequest = createStreamableHttpRequestHandler(handlerConfig);
 
   const httpServer = createHttpServer((req, res) => {
-    void createStreamableHttpRequestHandler({
-      path: config.path,
-      allowedHosts,
-      allowedOrigins: config.allowedOrigins,
-    })(req, res);
+    void handleRequest(req, res);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -198,7 +205,7 @@ export async function startStreamableHttpServer(
     throw new Error('Failed to determine HTTP server address');
   }
 
-  allowedHosts ??= defaultAllowedHosts(config.host, address.port);
+  handlerConfig.allowedHosts ??= defaultAllowedHosts(config.host, address.port);
 
   return {
     host: address.address,

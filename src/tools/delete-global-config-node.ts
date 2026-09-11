@@ -40,14 +40,17 @@ function isReferencedBy(flows: NodeRedItem[], nodeId: string): boolean {
 export async function deleteGlobalConfigNode(client: NodeRedClient, args: unknown) {
   const parsed = DeleteGlobalConfigNodeArgsSchema.parse(args);
 
-  const globalFlow = await client.getGlobalFlow();
+  // Both reads are needed either way, and neither depends on the other.
+  const [globalFlow, flowsResponse] = await Promise.all([
+    client.getGlobalFlow(),
+    client.getFlows(),
+  ]);
   const configs = globalFlow.configs ?? [];
 
   if (!configs.some((c) => c.id === parsed.nodeId)) {
     throw new Error(`Node with id "${parsed.nodeId}" not found`);
   }
 
-  const flowsResponse = await client.getFlows();
   if (isReferencedBy(flowsResponse.flows, parsed.nodeId)) {
     throw new Error(
       `Node "${parsed.nodeId}" is still referenced by other nodes and cannot be deleted`

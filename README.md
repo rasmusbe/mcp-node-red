@@ -61,6 +61,10 @@ Requests to Node-RED give up after 5 seconds without a connection and 30 seconds
 response or a body, instead of undici's 300 second default. `install_node` runs npm inside
 Node-RED, which can legitimately take minutes, so that one call is allowed 300 seconds.
 
+A read that fails because the connection was refused or reset, which is what a restarting
+Node-RED looks like right after an install or an add-on update, is retried once after half a
+second. Writes are never retried.
+
 ## Transports
 
 By default the server speaks JSON-RPC over stdio, which is what most MCP clients launch.
@@ -145,12 +149,12 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 ## Features
 
 ### Flow Management
-- **list_flows**: List flow tabs (id, label, type) without pulling every node
+- **list_flows**: List flow tabs (id, label, and disabled when the tab is disabled) without pulling every node
 - **get_flow**: Retrieve a flow by ID, with optional `nodeIds` and `types` filters and a `summary` mode that keeps only structure
 - **create_flow**: Create new flows via POST /flow
 - **update_flow**: Replace a whole flow safely via PUT /flow/:id
 - **patch_flow**: Change part of a flow: add, update and remove nodes and flow-scoped config nodes without resending the rest
-- **validate_flow**: Validate flow configuration without deploying
+- **validate_flow**: Validate a flow without deploying: required fields, unique ids, wires and group references that resolve, `z` matching the flow, and every node type installed or a known subflow
 - **delete_flow**: Delete a flow and all its nodes by ID
 
 ### Subflows and Global Config Nodes

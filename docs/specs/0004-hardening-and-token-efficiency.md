@@ -40,13 +40,13 @@ the network or the caller misbehaves, and how much of the context window a call 
 
 ### Batch 4, schema and speed
 
-- [ ] `NodeSetSchema` that matches `GET /nodes`; remove the duplicate parse in `get_node_help`
-- [ ] Node set cache in the client, invalidated by `install_node`, `remove_node_module`,
+- [x] `NodeSetSchema` that matches `GET /nodes`; remove the duplicate parse in `get_node_help`
+- [x] Node set cache in the client, invalidated by `install_node`, `remove_node_module`,
       `set_node_module_state`
-- [ ] Lightweight schema for `list_flows`
-- [ ] Parallel fetches in `delete_subflow` and `delete_global_config_node`
-- [ ] One retry on `ECONNREFUSED`/`ECONNRESET` for GET requests
-- [ ] `validate_flow` checks wires, `z` and installed node types
+- [x] Lightweight schema for `list_flows`
+- [x] Parallel fetches in `delete_subflow` and `delete_global_config_node`
+- [x] One retry on `ECONNREFUSED`/`ECONNRESET` for GET requests
+- [x] `validate_flow` checks wires, `z` and installed node types
 
 ### Batch 5, get_node_help
 
@@ -144,6 +144,62 @@ z.string()])` and go through `parseJsonArgument`, which returns an object unchan
 string with the error text the tools used before, so clients that learned the old signature keep
 working. `validate_flow` still answers `{valid: false, errors: [...]}` for a string it cannot
 parse rather than failing the call, since an unparseable flow is exactly what it reports on.
+
+## Design (batch 4)
+
+**Node set schema.** `GET /nodes` answers with a flat array of node sets, each
+`{id: "node-red/inject", name, types, enabled, module, version, local, user}`, but
+`client.getNodes` parsed it with `NodeModuleSchema`, which describes a module and only accepted
+these entries because it passes unknown keys through. `NodeSetSchema` already had the right
+shape, so `getNodes` returns `NodeSet[]` and the two local copies of the schema, one in
+`get_nodes` and one in `get_node_help`, are gone. `NodeModuleSchema` stays where the response
+really is a module object: `install_node` and `set_node_module_state`.
+
+**Node set cache.** Resolving a node type in `get_node_help` fetched the whole node list every
+time. `getNodes({cached: true})` answers from a list younger than `NODE_SET_CACHE_TTL_MS`, five
+minutes, and otherwise fetches; the plain `getNodes()` that `get_nodes` uses always fetches and
+refreshes what is held, so the tool still shows the current state. Concurrent callers share the
+one request in flight, and a failed fetch is not left behind as that request. `install_node`,
+`remove_node_module` and `set_node_module_state` clear the cache, and `resolveType` asks once
+more without the cache before reporting a type as unknown, which covers a module installed from
+the editor while the cache is warm. The cache lives in a holder object because `withSignal`
+copies own properties into its view, so a field that gets reassigned would only ever update one
+of the two. The HTTP transport built a client per request through `createServer`, which left the
+cache no life at all, so `createServer` now takes an optional client, `createClient` is exported
+for the callers that need one, and `createStreamableHttpRequestHandler` builds a single client
+and a single handler that every request shares.
+
+**Lightweight list_flows.** `list_flows` needs the tabs, and `getFlows` parses the whole
+`/flows` payload, 500 KB and about 780 items on the measured instance, through a three-way union
+of passthrough objects: 9 to 11 ms of Zod against 1.3 ms of `JSON.parse`. `client.listTabs` reads
+the same response with a schema that declares four fields and strips the rest, so Zod never walks
+a node's properties, and returns only the tabs. The output is `{id, label}` per tab plus
+`disabled` when the tab is disabled; `type` is gone, because every item in the list is a tab.
+`getFlows` stays for the tools that need every node.
+
+**Parallel fetches.** `delete_subflow` and `delete_global_config_node` need the global flow and
+the flow list, and neither read depends on the other, so they go out together. The checks keep
+their order: not found is still reported before the instance or reference check.
+
+**One retry for connection failures.** Node-RED restarts after `install_node` and whenever the
+Home Assistant add-on updates, and the first request into that window fails with `ECONNREFUSED`
+or `ECONNRESET` before it reaches the server. Every request now goes through one `send` method,
+which retries a GET once after `RETRY_DELAY_MS`, 500 ms, when the error code, or the code on its
+cause, is one of `ECONNREFUSED`, `ECONNRESET`, `UND_ERR_SOCKET` or `EPIPE`. Nothing else is
+retried: a write could be repeated after Node-RED already applied it, an aborted call is meant to
+stop, and a timeout means the server may still be working on the first attempt.
+
+**validate_flow.** The old check lived in the client and only looked for missing ids and types,
+which is close to nothing: Node-RED accepts a node whose type is not installed and deploys it as
+an `unknown` node, and accepts a wire to an id that does not exist. The logic moved into the tool
+and now reports duplicate ids and a node that reuses the flow id, a wire to an id that is not in
+the flow, a `z` that names another flow, a `g` that is not a group in the flow and a group that
+lists a node that is not there, and any type that no installed node set registers. A type is
+known when a node set registers it, when it is `group`, which the editor draws and no module
+provides, or when it is `subflow:<id>` for a subflow in the global flow. The node sets are read
+from the cache and refetched once before a type is reported as missing, for the same reason
+`get_node_help` does. The flow id is optional here, because a `create_flow` payload has none yet,
+and the `z` check is skipped when there is no id to compare against.
 
 ## References
 

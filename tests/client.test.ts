@@ -1,11 +1,13 @@
 import { Agent, request } from 'undici';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BODY_TIMEOUT_MS,
   CONNECT_TIMEOUT_MS,
   HEADERS_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
+  NODE_SET_CACHE_TTL_MS,
   NodeRedClient,
+  RETRY_DELAY_MS,
   nodeRedAgent,
 } from '../src/client.js';
 import type { Config } from '../src/schemas.js';
@@ -135,6 +137,66 @@ describe('NodeRedClient', () => {
           'Node-RED-API-Version': 'v2',
         },
       });
+    });
+  });
+
+  describe('listTabs', () => {
+    const respondWith = (flows: unknown[]) => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue({ rev: 'abc123', flows }), text: vi.fn() },
+      } as any);
+    };
+
+    it('should keep the tabs and drop everything else', async () => {
+      respondWith([
+        { id: '1', type: 'tab', label: 'Flow 1' },
+        { id: 'n1', type: 'inject', z: '1', name: 'Inject', wires: [['n2']] },
+        { id: 'sf1', type: 'subflow', name: 'My Subflow' },
+        { id: '2', type: 'tab', label: 'Flow 2' },
+      ]);
+
+      const result = await client.listTabs();
+
+      expect(result).toEqual([
+        { id: '1', label: 'Flow 1', disabled: undefined },
+        { id: '2', label: 'Flow 2', disabled: undefined },
+      ]);
+      expect(request).toHaveBeenCalledWith('http://localhost:1880/flows', {
+        method: 'GET',
+        dispatcher: nodeRedAgent,
+        headers: {
+          'Content-Type': 'application/json',
+          'Node-RED-API-Version': 'v2',
+          Authorization: 'Bearer test-token',
+        },
+      });
+    });
+
+    it('should report a disabled tab', async () => {
+      respondWith([{ id: '1', type: 'tab', label: 'Flow 1', disabled: true }]);
+
+      await expect(client.listTabs()).resolves.toEqual([
+        { id: '1', label: 'Flow 1', disabled: true },
+      ]);
+    });
+
+    it('should strip the properties a tab listing does not use', async () => {
+      respondWith([{ id: '1', type: 'tab', label: 'Flow 1', info: 'notes', env: [] }]);
+
+      const [tab] = await client.listTabs();
+
+      expect(tab).not.toHaveProperty('info');
+      expect(tab).not.toHaveProperty('env');
+    });
+
+    it('should throw error on failed request', async () => {
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 500,
+        body: { text: vi.fn().mockResolvedValue('Internal Server Error') },
+      } as any);
+
+      await expect(client.listTabs()).rejects.toThrow('Failed to get flows: 500');
     });
   });
 
@@ -330,67 +392,6 @@ describe('NodeRedClient', () => {
       } as any);
 
       await expect(client.deleteFlow('nonexistent')).rejects.toThrow('Failed to delete flow: 404');
-    });
-  });
-
-  describe('validateFlow', () => {
-    it('should validate flow successfully', async () => {
-      const validFlow = {
-        id: '1',
-        label: 'Test Flow',
-        nodes: [{ id: '2', type: 'inject', name: 'Test' }],
-      };
-
-      const result = await client.validateFlow(validFlow);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toBeUndefined();
-    });
-
-    it('should detect missing required fields', async () => {
-      const invalidFlow = {
-        id: '',
-        label: 'Test',
-      };
-
-      const result = await client.validateFlow(invalidFlow);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toBeDefined();
-      expect(result.errors?.[0]).toContain('Flow missing required id field');
-    });
-
-    it('should validate nodes in flow', async () => {
-      const flowWithInvalidNode = {
-        id: '1',
-        label: 'Test',
-        nodes: [{ id: '', type: 'inject' }],
-      };
-
-      const result = await client.validateFlow(flowWithInvalidNode);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toBeDefined();
-      expect(result.errors?.[0]).toContain('Node missing required id field');
-    });
-
-    it('should validate config nodes', async () => {
-      const flowWithInvalidConfig = {
-        id: '1',
-        label: 'Test',
-        configs: [{ id: '', type: '' }],
-      };
-
-      const result = await client.validateFlow(flowWithInvalidConfig);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toBeDefined();
-    });
-
-    it('should handle validation errors gracefully', async () => {
-      const result = await client.validateFlow({ id: '1' });
-
-      expect(result.valid).toBe(true);
     });
   });
 
@@ -849,34 +850,40 @@ describe('NodeRedClient', () => {
   });
 
   describe('getNodes', () => {
-    it('should fetch nodes successfully', async () => {
-      const mockModules = [
-        {
-          name: 'node-red-contrib-example',
-          version: '1.0.0',
-          nodes: {
-            example: {
-              id: 'node-red-contrib-example/example',
-              name: 'example',
-              types: ['example-node'],
-              enabled: true,
-              module: 'node-red-contrib-example',
-            },
-          },
-        },
-      ];
+    const nodeSets = [
+      {
+        id: 'node-red/inject',
+        name: 'inject',
+        types: ['inject'],
+        enabled: true,
+        module: 'node-red',
+        version: '5.0.6',
+        local: false,
+        user: false,
+      },
+      {
+        id: 'node-red/link',
+        name: 'link',
+        types: ['link in', 'link out'],
+        enabled: true,
+        module: 'node-red',
+        version: '5.0.6',
+      },
+    ];
 
+    const respondWithSets = (sets: unknown = nodeSets) => {
       vi.mocked(request).mockResolvedValue({
         statusCode: 200,
-        body: {
-          json: vi.fn().mockResolvedValue(mockModules),
-          text: vi.fn(),
-        },
+        body: { json: vi.fn().mockResolvedValue(sets), text: vi.fn() },
       } as any);
+    };
+
+    it('should fetch the flat node set list', async () => {
+      respondWithSets();
 
       const result = await client.getNodes();
 
-      expect(result).toEqual(mockModules);
+      expect(result).toEqual(nodeSets);
       expect(request).toHaveBeenCalledWith('http://localhost:1880/nodes', {
         method: 'GET',
         dispatcher: nodeRedAgent,
@@ -889,40 +896,21 @@ describe('NodeRedClient', () => {
       });
     });
 
-    it('should handle modules without nodes field', async () => {
-      const mockModules = [
+    it('should accept a set without the optional fields', async () => {
+      respondWithSets([
         {
-          name: 'node-red',
-          version: '4.1.5',
+          id: 'node-red/inject',
+          name: 'inject',
+          types: ['inject'],
+          enabled: true,
+          module: 'node-red',
         },
-        {
-          name: 'node-red-contrib-example',
-          version: '1.0.0',
-          nodes: {
-            example: {
-              id: 'node-red-contrib-example/example',
-              name: 'example',
-              types: ['example-node'],
-              enabled: true,
-              module: 'node-red-contrib-example',
-            },
-          },
-        },
-      ];
-
-      vi.mocked(request).mockResolvedValue({
-        statusCode: 200,
-        body: {
-          json: vi.fn().mockResolvedValue(mockModules),
-          text: vi.fn(),
-        },
-      } as any);
+      ]);
 
       const result = await client.getNodes();
 
-      expect(result).toHaveLength(2);
-      expect(result[0].nodes).toBeUndefined();
-      expect(result[1].nodes).toBeDefined();
+      expect(result[0].version).toBeUndefined();
+      expect(result[0].local).toBeUndefined();
     });
 
     it('should throw error on failed request', async () => {
@@ -934,6 +922,119 @@ describe('NodeRedClient', () => {
       } as any);
 
       await expect(client.getNodes()).rejects.toThrow('Failed to get nodes: 500');
+    });
+
+    it('should serve a cached call from the last fetch', async () => {
+      respondWithSets();
+
+      await client.getNodes();
+      const result = await client.getNodes({ cached: true });
+
+      expect(result).toEqual(nodeSets);
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('should always fetch when the cache is not asked for', async () => {
+      respondWithSets();
+
+      await client.getNodes();
+      await client.getNodes();
+
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fetch again once the cached list has expired', async () => {
+      vi.useFakeTimers();
+      respondWithSets();
+
+      try {
+        await client.getNodes({ cached: true });
+        vi.advanceTimersByTime(NODE_SET_CACHE_TTL_MS + 1);
+        await client.getNodes({ cached: true });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('should share one request between concurrent cached calls', async () => {
+      respondWithSets();
+
+      const [first, second] = await Promise.all([
+        client.getNodes({ cached: true }),
+        client.getNodes({ cached: true }),
+      ]);
+
+      expect(first).toEqual(nodeSets);
+      expect(second).toEqual(nodeSets);
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not remember a failed fetch as the request in flight', async () => {
+      vi.mocked(request).mockResolvedValueOnce({
+        statusCode: 500,
+        body: { text: vi.fn().mockResolvedValue('boom') },
+      } as any);
+
+      await expect(client.getNodes({ cached: true })).rejects.toThrow('Failed to get nodes: 500');
+
+      respondWithSets();
+      await expect(client.getNodes({ cached: true })).resolves.toEqual(nodeSets);
+    });
+
+    it('should drop the cache after installing a module', async () => {
+      respondWithSets();
+      await client.getNodes();
+
+      vi.mocked(request).mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ name: 'node-red-contrib-foo', version: '1.0.0' }),
+          text: vi.fn(),
+        },
+      } as any);
+      await client.installNode('node-red-contrib-foo');
+
+      respondWithSets();
+      await client.getNodes({ cached: true });
+
+      expect(request).toHaveBeenCalledTimes(3);
+    });
+
+    it('should drop the cache after enabling or disabling a module', async () => {
+      respondWithSets();
+      await client.getNodes();
+
+      vi.mocked(request).mockResolvedValueOnce({
+        statusCode: 200,
+        body: {
+          json: vi.fn().mockResolvedValue({ name: 'node-red-contrib-foo', version: '1.0.0' }),
+          text: vi.fn(),
+        },
+      } as any);
+      await client.setNodeModuleState('node-red-contrib-foo', false);
+
+      respondWithSets();
+      await client.getNodes({ cached: true });
+
+      expect(request).toHaveBeenCalledTimes(3);
+    });
+
+    it('should drop the cache after removing a module', async () => {
+      respondWithSets();
+      await client.getNodes();
+
+      vi.mocked(request).mockResolvedValueOnce({
+        statusCode: 204,
+        body: { json: vi.fn(), text: vi.fn() },
+      } as any);
+      await client.removeNodeModule('node-red-contrib-foo');
+
+      respondWithSets();
+      await client.getNodes({ cached: true });
+
+      expect(request).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -1291,6 +1392,19 @@ describe('NodeRedClient', () => {
       expect(client.withSignal(undefined)).toBe(client);
     });
 
+    it('should share the node set cache with the client it came from', async () => {
+      const controller = new AbortController();
+      vi.mocked(request).mockResolvedValue({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue([]), text: vi.fn() },
+      } as any);
+
+      await client.getNodes();
+      await client.withSignal(controller.signal).getNodes({ cached: true });
+
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
     it('should leave the client it came from unbound', async () => {
       const controller = new AbortController();
       okFlows();
@@ -1342,6 +1456,93 @@ describe('NodeRedClient', () => {
       failWith(500, '');
 
       await expect(messageOf()).resolves.toBe('Failed to get flows: 500');
+    });
+  });
+  describe('connection retry', () => {
+    const okFlows = { rev: 'a', flows: [] };
+    const connectionError = (code: string) =>
+      Object.assign(new Error(`socket hang up (${code})`), { code });
+
+    const okResponse = () =>
+      ({
+        statusCode: 200,
+        body: { json: vi.fn().mockResolvedValue(okFlows), text: vi.fn() },
+      }) as any;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /**
+     * Run a call and let the retry delay pass. The outcome is captured before the timers move so
+     * a rejection is never left unhandled while the fake clock ticks.
+     */
+    const settle = async <T>(run: () => Promise<T>): Promise<T> => {
+      const outcome = run().then(
+        (value) => () => value,
+        (error: unknown) => () => {
+          throw error;
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+      return (await outcome)();
+    };
+
+    it('should retry a GET once after a refused connection', async () => {
+      vi.mocked(request)
+        .mockRejectedValueOnce(connectionError('ECONNREFUSED'))
+        .mockResolvedValueOnce(okResponse());
+
+      await expect(settle(() => client.getFlows())).resolves.toEqual(okFlows);
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry when the code is on the cause', async () => {
+      const error = new Error('fetch failed');
+      (error as { cause?: unknown }).cause = { code: 'ECONNRESET' };
+      vi.mocked(request).mockRejectedValueOnce(error).mockResolvedValueOnce(okResponse());
+
+      await expect(settle(() => client.getFlows())).resolves.toEqual(okFlows);
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('should give up when the retry fails as well', async () => {
+      vi.mocked(request).mockRejectedValue(connectionError('ECONNREFUSED'));
+
+      await expect(settle(() => client.getFlows())).rejects.toThrow('ECONNREFUSED');
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not retry a write', async () => {
+      vi.mocked(request).mockRejectedValue(connectionError('ECONNREFUSED'));
+
+      await expect(settle(() => client.createFlow({ id: 'f1', label: 'Flow' }))).rejects.toThrow(
+        'ECONNREFUSED'
+      );
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry once the caller has cancelled', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      vi.mocked(request).mockRejectedValue(connectionError('ECONNRESET'));
+
+      await expect(settle(() => client.withSignal(controller.signal).getFlows())).rejects.toThrow(
+        'ECONNRESET'
+      );
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry an error that is not a connection failure', async () => {
+      vi.mocked(request).mockRejectedValue(connectionError('UND_ERR_HEADERS_TIMEOUT'));
+
+      await expect(settle(() => client.getFlows())).rejects.toThrow('UND_ERR_HEADERS_TIMEOUT');
+      expect(request).toHaveBeenCalledTimes(1);
     });
   });
 });

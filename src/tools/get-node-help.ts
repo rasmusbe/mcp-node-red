@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NodeRedClient } from '../client.js';
 import { type NodeArgument, extractNodeArguments, extractNodeHelp } from '../node-help.js';
+import type { NodeSet } from '../schemas.js';
 import { textResult } from './result.js';
 
 const GetNodeHelpArgsSchema = z.union([
@@ -8,28 +9,21 @@ const GetNodeHelpArgsSchema = z.union([
   z.object({ module: z.string(), set: z.string(), raw: z.boolean().optional() }),
 ]);
 
-/**
- * GET /nodes returns one entry per node set, each carrying the types it registers and an id
- * of the form "<module>/<set>". That is enough to go from a node type seen in a flow to the
- * module and set the help endpoint wants.
- */
-const NodeSetListSchema = z.array(
-  z
-    .object({
-      id: z.string(),
-      types: z.array(z.string()).optional(),
-    })
-    .passthrough()
-);
-
 interface NodeSetRef {
   module: string;
   set: string;
 }
 
+/**
+ * A node set carries the types it registers and an id of the form "<module>/<set>", which is
+ * what the help endpoint wants. The cached list answers this in a request-free lookup; a type
+ * missing from it may be a module installed from the editor since, so ask again before giving up.
+ */
 async function resolveType(client: NodeRedClient, type: string): Promise<NodeSetRef> {
-  const sets = NodeSetListSchema.parse(await client.getNodes());
-  const match = sets.find((candidate) => candidate.types?.includes(type));
+  const registers = (sets: NodeSet[]) => sets.find((set) => set.types?.includes(type));
+
+  const match =
+    registers(await client.getNodes({ cached: true })) ?? registers(await client.getNodes());
 
   if (!match) {
     throw new Error(

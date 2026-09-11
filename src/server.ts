@@ -41,7 +41,8 @@ import { validateFlow } from './tools/validate-flow.js';
  */
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
-export function createServer() {
+/** The client for one Node-RED instance, configured from the environment. */
+export function createClient(): NodeRedClient {
   const nodeRedUrl = process.env.NODE_RED_URL;
   const nodeRedToken = process.env.NODE_RED_TOKEN;
 
@@ -49,12 +50,15 @@ export function createServer() {
     throw new Error('NODE_RED_URL environment variable is required');
   }
 
-  const config = ConfigSchema.parse({
-    nodeRedUrl,
-    nodeRedToken,
-  });
+  return new NodeRedClient(ConfigSchema.parse({ nodeRedUrl, nodeRedToken }));
+}
 
-  const client = new NodeRedClient(config);
+/**
+ * The HTTP transport builds a server per request, so it passes in a client of its own: a client
+ * created here would be thrown away with the server and its node set cache with it.
+ */
+export function createServer(options?: { client?: NodeRedClient }) {
+  const client = options?.client ?? createClient();
 
   const server = new Server(
     {
@@ -73,7 +77,7 @@ export function createServer() {
       {
         name: 'list_flows',
         description:
-          'List all flow tabs from Node-RED. Returns a compact list with id, label, and type for each tab. Use this before get_flow to discover available flow IDs.',
+          'List all flow tabs: id, label and disabled when the tab is disabled. Use this before get_flow to discover flow IDs.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -198,7 +202,7 @@ export function createServer() {
       {
         name: 'validate_flow',
         description:
-          'Validate flow configuration without deploying. Checks for required fields and structural integrity.',
+          'Validate a flow without deploying: required fields, unique ids, wires and group references that resolve, z matching the flow, and every node type installed or a known subflow.',
         inputSchema: {
           type: 'object',
           properties: {

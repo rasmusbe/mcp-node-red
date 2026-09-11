@@ -59,6 +59,23 @@ export const NodeRedFlowsResponseSchema = z.object({
   flows: z.array(NodeRedItemSchema),
 });
 
+/**
+ * Just enough of GET /flows to list the tabs. Every other schema here passes unknown keys
+ * through, which makes Zod walk each of the several hundred nodes in a real deployment; this one
+ * strips them instead, because a tab listing never looks at a node.
+ */
+export const FlowTabsResponseSchema = z.object({
+  rev: z.string(),
+  flows: z.array(
+    z.object({
+      id: z.string(),
+      type: z.string(),
+      label: z.string().optional(),
+      disabled: z.boolean().optional(),
+    })
+  ),
+});
+
 export const NodeRedGlobalFlowResponseSchema = z.object({
   id: z.literal('global'),
   configs: z.array(NodeRedConfigSchema).optional(),
@@ -168,6 +185,11 @@ export type NodeRedSubflow = z.infer<typeof NodeRedSubflowSchema>;
 export type NodeRedItem = z.infer<typeof NodeRedItemSchema>;
 export type NodeRedGlobalFlowResponse = z.infer<typeof NodeRedGlobalFlowResponseSchema>;
 export type NodeRedFlowsResponse = z.infer<typeof NodeRedFlowsResponseSchema>;
+export interface FlowTab {
+  id: string;
+  label: string;
+  disabled?: boolean;
+}
 export type FlowResponse = z.infer<typeof FlowResponseSchema>;
 export type UpdateFlowRequest = z.infer<typeof UpdateFlowRequestSchema>;
 export type CreateFlowRequest = z.infer<typeof CreateFlowRequestSchema>;

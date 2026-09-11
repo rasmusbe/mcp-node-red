@@ -94,8 +94,24 @@ describe('Runtime Info Tool Handlers', () => {
       vi.mocked(mockClient.getNodeConfig).mockResolvedValue(injectConfig);
 
       const result = await getNodeHelp(mockClient, { type: 'inject' });
+      expect(mockClient.getNodes).toHaveBeenCalledWith({ cached: true });
       expect(mockClient.getNodeConfig).toHaveBeenCalledWith('node-red', 'inject');
       expect(result.content[0].text).toContain('Injects a message into a flow.');
+    });
+
+    it('should ask for a fresh node list when the cached one does not know the type', async () => {
+      vi.mocked(mockClient.getNodes)
+        .mockResolvedValueOnce([] as any)
+        .mockResolvedValueOnce([
+          { id: 'node-red/inject', name: 'inject', version: '4.1.5', types: ['inject'] },
+        ] as any);
+      vi.mocked(mockClient.getNodeConfig).mockResolvedValue(injectConfig);
+
+      await getNodeHelp(mockClient, { type: 'inject' });
+
+      expect(mockClient.getNodes).toHaveBeenNthCalledWith(1, { cached: true });
+      expect(mockClient.getNodes).toHaveBeenNthCalledWith(2);
+      expect(mockClient.getNodeConfig).toHaveBeenCalledWith('node-red', 'inject');
     });
 
     it('should resolve a scoped module id on the last slash', async () => {

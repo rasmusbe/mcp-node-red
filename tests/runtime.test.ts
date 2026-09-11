@@ -108,9 +108,7 @@ describe('streamable HTTP runtime', () => {
       content: Array<{ text: string }>;
     };
 
-    expect(JSON.parse(result.content[0].text)).toEqual([
-      { id: 'tab1', label: 'Flow 1', type: 'tab' },
-    ]);
+    expect(JSON.parse(result.content[0].text)).toEqual([{ id: 'tab1', label: 'Flow 1' }]);
     await client.close();
   });
 

@@ -37,7 +37,7 @@ describe('Tool Handlers', () => {
       deleteContext: vi.fn(),
       updateFlow: vi.fn(),
       deleteFlow: vi.fn(),
-      validateFlow: vi.fn(),
+      listTabs: vi.fn(),
       getFlowState: vi.fn(),
       setFlowState: vi.fn(),
       getNodes: vi.fn(),
@@ -52,45 +52,34 @@ describe('Tool Handlers', () => {
   });
 
   describe('listFlows', () => {
-    it('should return only tab items with id, label, type', async () => {
-      const mockFlowsData = {
-        rev: 'abc123',
-        flows: [
-          { id: '1', type: 'tab', label: 'Flow 1' },
-          { id: '2', type: 'tab', label: 'Flow 2' },
-          { id: 'n1', type: 'inject', z: '1' },
-        ],
-      };
-
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData as any);
+    it('should return id and label for each tab', async () => {
+      vi.mocked(mockClient.listTabs).mockResolvedValue([
+        { id: '1', label: 'Flow 1' },
+        { id: '2', label: 'Flow 2' },
+      ]);
 
       const result = await listFlows(mockClient);
 
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toEqual([
-        { id: '1', label: 'Flow 1', type: 'tab' },
-        { id: '2', label: 'Flow 2', type: 'tab' },
+      expect(JSON.parse(result.content[0].text)).toEqual([
+        { id: '1', label: 'Flow 1' },
+        { id: '2', label: 'Flow 2' },
       ]);
     });
 
-    it('should filter out subflows and nodes', async () => {
-      const mockFlowsData = {
-        rev: 'abc123',
-        flows: [
-          { id: '1', type: 'tab', label: 'My Flow' },
-          { id: 'sf1', type: 'subflow', name: 'My Subflow' },
-        ],
-      };
-
-      vi.mocked(mockClient.getFlows).mockResolvedValue(mockFlowsData as any);
+    it('should mark a disabled tab and leave the others plain', async () => {
+      vi.mocked(mockClient.listTabs).mockResolvedValue([
+        { id: '1', label: 'Flow 1', disabled: false },
+        { id: '2', label: 'Flow 2', disabled: true },
+      ]);
 
       const result = await listFlows(mockClient);
 
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toHaveLength(1);
-      expect(parsed[0].id).toBe('1');
+      expect(JSON.parse(result.content[0].text)).toEqual([
+        { id: '1', label: 'Flow 1' },
+        { id: '2', label: 'Flow 2', disabled: true },
+      ]);
     });
   });
 
@@ -343,43 +332,205 @@ describe('Tool Handlers', () => {
   });
 
   describe('validateFlow', () => {
-    it('should validate valid flow', async () => {
-      vi.mocked(mockClient.validateFlow).mockResolvedValue({
-        valid: true,
-      });
-
-      const result = await validateFlow(mockClient, {
-        flow: JSON.stringify({ id: '1', label: 'Test', nodes: [] }),
-      });
-
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.valid).toBe(true);
-      expect(parsed.errors).toBeUndefined();
+    const nodeSet = (name: string, types: string[]) => ({
+      id: `node-red/${name}`,
+      name,
+      types,
+      enabled: true,
+      module: 'node-red',
+      version: '5.0.6',
     });
 
-    it('should return validation errors', async () => {
-      vi.mocked(mockClient.validateFlow).mockResolvedValue({
-        valid: false,
-        errors: ['Missing required field'],
+    const installed = (
+      sets: unknown[] = [nodeSet('inject', ['inject']), nodeSet('debug', ['debug'])]
+    ) => {
+      vi.mocked(mockClient.getNodes).mockResolvedValue(sets as any);
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({
+        id: 'global',
+        subflows: [{ id: 'sf1', type: 'subflow', name: 'Sub', nodes: [] }],
+      } as any);
+    };
+
+    const validate = async (flow: unknown) => {
+      const result = await validateFlow(mockClient, { flow });
+      return JSON.parse(result.content[0].text) as { valid: boolean; errors?: string[] };
+    };
+
+    it('should accept a flow whose nodes, wires and types all resolve', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        label: 'Test',
+        nodes: [
+          { id: 'n1', type: 'inject', z: 'f1', wires: [['n2']] },
+          { id: 'n2', type: 'debug', z: 'f1' },
+        ],
       });
 
-      const result = await validateFlow(mockClient, {
-        flow: JSON.stringify({ id: '1' }),
+      expect(parsed).toEqual({ valid: true });
+      expect(mockClient.getNodes).toHaveBeenCalledWith({ cached: true });
+      expect(mockClient.getNodes).toHaveBeenCalledTimes(1);
+    });
+
+    it('should accept a create payload that has no id yet', async () => {
+      installed();
+
+      await expect(
+        validate({ label: 'New', nodes: [{ id: 'n1', type: 'inject' }] })
+      ).resolves.toEqual({ valid: true });
+    });
+
+    it('should report a node or config node without id or type', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [
+          { id: '', type: 'inject' },
+          { id: 'n2', type: '' },
+        ],
+        configs: [
+          { id: '', type: 'mqtt-broker' },
+          { id: 'c2', type: '' },
+        ],
       });
 
-      const parsed = JSON.parse(result.content[0].text);
       expect(parsed.valid).toBe(false);
-      expect(parsed.errors).toEqual(['Missing required field']);
+      expect(parsed.errors).toEqual(
+        expect.arrayContaining([
+          'Node missing required id field',
+          'Node n2 missing required type field',
+          'Config node missing required id field',
+          'Config node c2 missing required type field',
+        ])
+      );
+    });
+
+    it('should report a duplicate id once', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [
+          { id: 'n1', type: 'inject' },
+          { id: 'n1', type: 'inject' },
+          { id: 'n1', type: 'inject' },
+        ],
+      });
+
+      expect(parsed.errors).toEqual(['Duplicate id "n1" in the flow']);
+    });
+
+    it('should report a node that reuses the flow id', async () => {
+      installed();
+
+      const parsed = await validate({ id: 'f1', nodes: [{ id: 'f1', type: 'inject' }] });
+
+      expect(parsed.errors).toEqual(['Node "f1" uses the id of the flow itself']);
+    });
+
+    it('should report a wire to a node that is not in the flow', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [{ id: 'n1', type: 'inject', wires: [['n2'], ['n3']] }],
+      });
+
+      expect(parsed.errors).toEqual([
+        'Node "n1" wires to unknown node "n2"',
+        'Node "n1" wires to unknown node "n3"',
+      ]);
+    });
+
+    it('should report a z that names another flow', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [{ id: 'n1', type: 'inject', z: 'f2' }],
+        configs: [{ id: 'c1', type: 'inject', z: 'f1' }],
+      });
+
+      expect(parsed.errors).toEqual(['Node "n1" has z "f2" but belongs to flow "f1"']);
+    });
+
+    it('should report a group reference that does not resolve', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [
+          { id: 'n1', type: 'inject', g: 'g1' },
+          { id: 'g2', type: 'group', nodes: ['n1', 'gone'] },
+        ],
+      });
+
+      expect(parsed.errors).toEqual([
+        'Node "n1" is in group "g1", which is not a group in the flow',
+        'Group "g2" lists unknown node "gone"',
+      ]);
+    });
+
+    it('should accept a group, a subflow instance and a node the group contains', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [
+          { id: 'g1', type: 'group', nodes: ['n1'] },
+          { id: 'n1', type: 'inject', g: 'g1' },
+          { id: 'n2', type: 'subflow:sf1' },
+        ],
+      });
+
+      expect(parsed).toEqual({ valid: true });
+    });
+
+    it('should report a type no installed node set registers', async () => {
+      installed();
+
+      const parsed = await validate({
+        id: 'f1',
+        nodes: [
+          { id: 'n1', type: 'foo bar' },
+          { id: 'n2', type: 'subflow:missing' },
+        ],
+      });
+
+      expect(parsed.errors).toEqual([
+        'Node "n1" has type "foo bar" which is not installed',
+        'Node "n2" has type "subflow:missing" which is not installed',
+      ]);
+    });
+
+    it('should look past the cached node sets before reporting a type as missing', async () => {
+      vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global' } as any);
+      vi.mocked(mockClient.getNodes)
+        .mockResolvedValueOnce([] as any)
+        .mockResolvedValueOnce([nodeSet('inject', ['inject'])] as any);
+
+      const parsed = await validate({ id: 'f1', nodes: [{ id: 'n1', type: 'inject' }] });
+
+      expect(parsed).toEqual({ valid: true });
+      expect(mockClient.getNodes).toHaveBeenNthCalledWith(1, { cached: true });
+      expect(mockClient.getNodes).toHaveBeenNthCalledWith(2);
+    });
+
+    it('should not ask Node-RED about a flow with no nodes', async () => {
+      const parsed = await validate({ id: 'f1', label: 'Empty' });
+
+      expect(parsed).toEqual({ valid: true });
+      expect(mockClient.getNodes).not.toHaveBeenCalled();
+      expect(mockClient.getGlobalFlow).not.toHaveBeenCalled();
     });
 
     it('should handle invalid JSON gracefully', async () => {
-      const result = await validateFlow(mockClient, {
-        flow: 'invalid json',
-      });
+      const result = await validateFlow(mockClient, { flow: 'invalid json' });
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.valid).toBe(false);
-      expect(parsed.errors).toBeDefined();
       expect(parsed.errors[0]).toContain('Invalid JSON');
     });
   });
@@ -1196,17 +1347,21 @@ describe('Tool Handlers', () => {
       },
       {
         name: 'validate_flow',
-        value: { id: 'f1', label: 'New Flow', nodes: [] },
+        value: { id: 'f1', label: 'New Flow', nodes: [{ id: 'n1', type: 'inject' }] },
         setup: () => {
-          vi.mocked(mockClient.validateFlow).mockResolvedValue({ valid: true });
+          vi.mocked(mockClient.getNodes).mockResolvedValue([
+            {
+              id: 'node-red/inject',
+              name: 'inject',
+              types: ['inject'],
+              enabled: true,
+              module: 'node-red',
+            },
+          ] as any);
+          vi.mocked(mockClient.getGlobalFlow).mockResolvedValue({ id: 'global' } as any);
         },
         run: (flow: unknown) => validateFlow(mockClient, { flow }),
-        expectCall: () =>
-          expect(mockClient.validateFlow).toHaveBeenCalledWith({
-            id: 'f1',
-            label: 'New Flow',
-            nodes: [],
-          }),
+        expectCall: () => expect(mockClient.getNodes).toHaveBeenCalledWith({ cached: true }),
       },
       {
         name: 'create_subflow',

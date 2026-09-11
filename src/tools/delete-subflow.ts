@@ -19,14 +19,17 @@ function findInstances(flows: NodeRedItem[], subflowId: string): string[] {
 export async function deleteSubflow(client: NodeRedClient, args: unknown) {
   const parsed = DeleteSubflowArgsSchema.parse(args);
 
-  const globalFlow = await client.getGlobalFlow();
+  // Both reads are needed either way, and neither depends on the other.
+  const [globalFlow, flowsResponse] = await Promise.all([
+    client.getGlobalFlow(),
+    client.getFlows(),
+  ]);
   const subflows = globalFlow.subflows ?? [];
 
   if (!subflows.some((s) => s.id === parsed.subflowId)) {
     throw new Error(`Subflow with id "${parsed.subflowId}" not found`);
   }
 
-  const flowsResponse = await client.getFlows();
   const instances = findInstances(flowsResponse.flows, parsed.subflowId);
   if (instances.length > 0) {
     throw new Error(
