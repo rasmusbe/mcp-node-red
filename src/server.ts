@@ -77,7 +77,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'list_flows',
         description:
-          'List all flow tabs: id, label and disabled when the tab is disabled. Use this before get_flow to discover flow IDs.',
+          'List the flow tabs: id, label and disabled. Use before get_flow to discover flow IDs.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -86,28 +86,26 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_flow',
         description:
-          'Get a flow tab by ID with all its nodes and flow-scoped config nodes. nodeIds and types keep only matching nodes (either filter matches). summary reduces each node to id, type, name, group and wires, which is enough to understand structure but is NOT a valid input for update_flow; use patch_flow for changes.',
+          'Get a flow tab with its nodes and flow-scoped config nodes. nodeIds and types keep a node when either filter matches it. summary reduces each node to id, type, name, group and wires, which is not valid input for update_flow; use patch_flow for changes.',
         inputSchema: {
           type: 'object',
           properties: {
             flowId: {
               type: 'string',
-              description: 'ID of the flow tab to retrieve',
             },
             nodeIds: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Keep only nodes and config nodes with these ids.',
+              description: 'Keep only these ids.',
             },
             types: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Keep only nodes and config nodes of these types (e.g. "inject").',
+              description: 'Keep only these node types (e.g. "mqtt in").',
             },
             summary: {
               type: 'boolean',
-              description:
-                'Reduce each node to id, type, name, group and wires instead of its full configuration.',
+              description: 'Reduce each node to id, type, name, group and wires.',
             },
           },
           required: ['flowId'],
@@ -115,15 +113,13 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'create_flow',
-        description:
-          'Create a new flow using POST /flow. Adds a new flow to Node-RED. Flow ID can be provided or will be auto-generated.',
+        description: 'Create a flow tab. The id is generated when omitted.',
         inputSchema: {
           type: 'object',
           properties: {
             flow: {
               type: 'object',
-              description:
-                'Flow object: {id?, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
+              description: 'Flow object: {id?, label, nodes: [], configs: []}.',
             },
           },
           required: ['flow'],
@@ -132,18 +128,16 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'update_flow',
         description:
-          'Update a specific flow by ID using PUT /flow/:id. Only affects the specified flow, leaving all other flows untouched. Replaces the flow with what is sent, so the whole node list has to be included; use patch_flow to change part of an existing flow.',
+          'Replace one flow with what is sent, leaving other flows untouched; the whole node list has to be included, so prefer patch_flow to change part of a flow.',
         inputSchema: {
           type: 'object',
           properties: {
             flowId: {
               type: 'string',
-              description: 'ID of the flow to update',
             },
             updates: {
               type: 'object',
-              description:
-                'Flow object: {id, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
+              description: 'Flow object: {id, label, nodes: [], configs: []}.',
             },
           },
           required: ['flowId', 'updates'],
@@ -152,48 +146,43 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'patch_flow',
         description:
-          'Change part of a flow without resending it: remove, update (shallow merge by id) and add nodes and flow-scoped config nodes, and set label, disabled or info. Wires and group membership that point at removed nodes are cleaned up. Reads the flow, applies the changes and writes it back with PUT /flow/:id, so an editor deploy of the same flow between the read and the write is overwritten. Prefer this over update_flow for changes to an existing flow.',
+          'Change part of a flow without resending it, applying remove, update (shallow merge by id) and add of nodes and flow-scoped config nodes in that order, plus label, disabled and info. Wires and group membership pointing at removed nodes are cleaned up. Prefer this over update_flow. The read and the write are separate, so an editor deploy in between is overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
             flowId: {
               type: 'string',
-              description: 'ID of the flow to patch',
             },
             label: {
               type: 'string',
-              description: 'New label for the flow tab.',
             },
             disabled: {
               type: 'boolean',
-              description: 'Whether the flow tab is disabled.',
             },
             info: {
               type: 'string',
-              description: 'New description text for the flow tab.',
+              description: 'Description text for the flow tab.',
             },
             removeNodeIds: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Ids of nodes or flow-scoped config nodes to remove from the flow.',
+              description: 'Ids of nodes or config nodes to remove.',
             },
             updateNodes: {
               type: 'array',
               items: { type: 'object' },
               description:
-                'Node patches, each with the id of an existing node and the properties to merge into it; arrays such as wires are replaced whole.',
+                'Patches, each with the id of an existing node and the properties to merge; arrays such as wires are replaced whole.',
             },
             addNodes: {
               type: 'array',
               items: { type: 'object' },
-              description:
-                'Nodes to append to the flow, each with at least id and type; z is set to the flow id when missing.',
+              description: 'Nodes to append, each with at least id and type; z defaults to flowId.',
             },
             addConfigs: {
               type: 'array',
               items: { type: 'object' },
-              description:
-                'Flow-scoped config nodes to append, each with at least id and type; z is set to the flow id when missing.',
+              description: 'Flow-scoped config nodes to append, same shape as addNodes.',
             },
           },
           required: ['flowId'],
@@ -202,14 +191,13 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'validate_flow',
         description:
-          'Validate a flow without deploying: required fields, unique ids, wires and group references that resolve, z matching the flow, and every node type installed or a known subflow.',
+          'Check a flow without deploying it: required fields, unique ids, wires and group references that resolve, z matching the flow, and every node type installed or a known subflow.',
         inputSchema: {
           type: 'object',
           properties: {
             flow: {
               type: 'object',
-              description:
-                'Flow object: {id, label, nodes: [], configs: []}. A JSON string with the same content is also accepted.',
+              description: 'Flow object: {id, label, nodes: [], configs: []}.',
             },
           },
           required: ['flow'],
@@ -217,13 +205,12 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'delete_flow',
-        description: 'Delete a flow from Node-RED by ID. Removes the flow and all its nodes.',
+        description: 'Delete a flow tab and all its nodes.',
         inputSchema: {
           type: 'object',
           properties: {
             flowId: {
               type: 'string',
-              description: 'ID of the flow to delete',
             },
           },
           required: ['flowId'],
@@ -231,8 +218,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'get_subflows',
-        description:
-          'Get all subflow definitions from Node-RED. Subflows are reusable flow components stored in the global flow.',
+        description: 'Get every subflow definition.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -241,14 +227,14 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'create_subflow',
         description:
-          'Create a new subflow definition in Node-RED. Subflows are reusable components with named inputs and outputs. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+          'Create a subflow definition, a reusable component with named inputs and outputs. Subflow writes detect a concurrent editor deploy and retry once.',
         inputSchema: {
           type: 'object',
           properties: {
             subflow: {
               type: 'object',
               description:
-                'Subflow object: {id, type: "subflow", name, in: [], out: [], nodes: [], configs: []}. A JSON string with the same content is also accepted.',
+                'Subflow object: {id, type: "subflow", name, in: [], out: [], nodes: [], configs: []}.',
             },
           },
           required: ['subflow'],
@@ -256,19 +242,16 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'update_subflow',
-        description:
-          'Update an existing subflow definition by ID. Fields in "updates" are merged into the existing definition; id and type cannot be changed. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+        description: 'Merge fields into a subflow definition; id and type cannot be changed.',
         inputSchema: {
           type: 'object',
           properties: {
             subflowId: {
               type: 'string',
-              description: 'ID of the subflow to update',
             },
             updates: {
               type: 'object',
-              description:
-                'Object with the fields to update: {name, in, out, nodes, configs, env, ...}. A JSON string with the same content is also accepted.',
+              description: 'Fields to update: {name, in, out, nodes, configs, env, ...}.',
             },
           },
           required: ['subflowId', 'updates'],
@@ -277,13 +260,12 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'delete_subflow',
         description:
-          'Delete a subflow definition from Node-RED by ID. Errors if any flow still contains an instance of the subflow. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+          'Delete a subflow definition. Errors if a flow still contains an instance of it.',
         inputSchema: {
           type: 'object',
           properties: {
             subflowId: {
               type: 'string',
-              description: 'ID of the subflow to delete',
             },
           },
           required: ['subflowId'],
@@ -292,14 +274,13 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'create_global_config_node',
         description:
-          'Create a new global config node (no z property) accessible from all flows. Errors if a node with that id already exists or if the node contains a z property. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+          'Create a global config node, reachable from all flows. Errors if the id exists or the node has a z property. Global config node writes detect a concurrent editor deploy and retry once.',
         inputSchema: {
           type: 'object',
           properties: {
             node: {
               type: 'object',
-              description:
-                'Config node object with id, type, name and type-specific fields. Must not include a z property. A JSON string with the same content is also accepted.',
+              description: 'Config node with id, type, name and type-specific fields, without z.',
             },
           },
           required: ['node'],
@@ -308,18 +289,16 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'update_global_config_node',
         description:
-          'Update an existing global config node by replacing it. Errors if the node does not exist or if the replacement contains a z property. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+          'Replace a global config node. Errors if it does not exist or the replacement has a z property.',
         inputSchema: {
           type: 'object',
           properties: {
             nodeId: {
               type: 'string',
-              description: 'ID of the global config node to update',
             },
             node: {
               type: 'object',
-              description:
-                'Replacement node object. Must not include a z property. A JSON string with the same content is also accepted.',
+              description: 'Replacement node, without z.',
             },
           },
           required: ['nodeId', 'node'],
@@ -328,13 +307,12 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'delete_global_config_node',
         description:
-          'Delete a global config node by ID. Errors if the node does not exist or is still referenced by other nodes. Written with optimistic locking: a deploy from the editor in between is detected, the change is retried once on the fresh configuration, and a second conflict is reported instead of overwriting anything.',
+          'Delete a global config node. Errors if it does not exist or is still referenced.',
         inputSchema: {
           type: 'object',
           properties: {
             nodeId: {
               type: 'string',
-              description: 'ID of the global config node to delete',
             },
           },
           required: ['nodeId'],
@@ -343,7 +321,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_flow_state',
         description:
-          'Get the runtime state of Node-RED flows. Returns whether flows are currently started or stopped. Requires runtimeState to be enabled in Node-RED settings.',
+          'Report whether the flows are started or stopped. Requires runtimeState enabled in the Node-RED settings.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -352,14 +330,13 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'set_flow_state',
         description:
-          'Set the runtime state of Node-RED flows to start or stop them. Requires runtimeState to be enabled in Node-RED settings.',
+          'Start or stop all flows. Requires runtimeState enabled in the Node-RED settings.',
         inputSchema: {
           type: 'object',
           properties: {
             state: {
               type: 'string',
               enum: ['start', 'stop'],
-              description: 'The desired flow state: "start" to run flows, "stop" to halt them',
             },
           },
           required: ['state'],
@@ -367,27 +344,24 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'get_context',
-        description:
-          'Read context store data at global, flow, or node scope. Omit key to list all keys.',
+        description: 'Read a context store value. Omit key to list the keys in the scope.',
         inputSchema: {
           type: 'object',
           properties: {
             scope: {
               type: 'string',
               enum: ['global', 'flow', 'node'],
-              description: 'Context scope to read from',
             },
             id: {
               type: 'string',
-              description: 'Flow or node ID (required for flow and node scope)',
+              description: 'Flow or node id, required for those scopes.',
             },
             key: {
               type: 'string',
-              description: 'Context key to read. Omit to list all keys.',
             },
             store: {
               type: 'string',
-              description: 'Optional context store name',
+              description: 'Context store name.',
             },
           },
           required: ['scope'],
@@ -395,26 +369,24 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'delete_context',
-        description: 'Delete a context store value at global, flow, or node scope.',
+        description: 'Delete a context store value.',
         inputSchema: {
           type: 'object',
           properties: {
             scope: {
               type: 'string',
               enum: ['global', 'flow', 'node'],
-              description: 'Context scope to delete from',
             },
             id: {
               type: 'string',
-              description: 'Flow or node ID (required for flow and node scope)',
+              description: 'Flow or node id, required for those scopes.',
             },
             key: {
               type: 'string',
-              description: 'Context key to delete',
             },
             store: {
               type: 'string',
-              description: 'Optional context store name',
+              description: 'Context store name.',
             },
           },
           required: ['scope', 'key'],
@@ -423,7 +395,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_nodes',
         description:
-          'List installed node modules, grouped per module with version, enabled state and the node types each node set registers. Use get_node_help for the documentation of a type.',
+          'List installed node modules with version, enabled state and the types each node set registers. Use get_node_help for the documentation of a type.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -432,41 +404,37 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_node_help',
         description:
-          'Get the documentation for a node type as markdown, with the properties the node stores (from its editor definition) and their defaults. Pass "type" with a node type as it appears in a flow (e.g. "inject", "mqtt in") and it is resolved to its module and set, or pass "module" and "set" directly. Set "raw" to get the full node config HTML including the edit dialog and editor JavaScript.',
+          'Documentation for a node type as markdown, with the properties the node stores and their defaults. Pass type, or module and set.',
         inputSchema: {
           type: 'object',
           properties: {
             type: {
               type: 'string',
-              description:
-                'Node type as used in flows (e.g. "inject", "mqtt in"). Resolved to a module and set via the installed node list.',
+              description: 'Node type as used in flows (e.g. "mqtt in").',
             },
             module: {
               type: 'string',
-              description:
-                'Node module name (e.g. "node-red", "node-red-contrib-zigbee2mqtt"). Use together with "set" instead of "type".',
+              description: 'Module name (e.g. "node-red", "@scope/name").',
             },
             set: {
               type: 'string',
-              description: 'Node set name within the module (e.g. "inject", "zigbee2mqtt-in")',
+              description: 'Node set name within the module.',
             },
             raw: {
               type: 'boolean',
-              description:
-                'Return the full node config HTML instead of just the help section. Defaults to false.',
+              description: 'Return the full node config HTML instead of the help section.',
             },
           },
         },
       },
       {
         name: 'install_node',
-        description: 'Install a new node module into Node-RED. Installs from the npm registry.',
+        description: 'Install a node module from npm.',
         inputSchema: {
           type: 'object',
           properties: {
             module: {
               type: 'string',
-              description: 'Name of the npm module to install (e.g. "node-red-contrib-example")',
             },
           },
           required: ['module'],
@@ -474,18 +442,15 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'set_node_module_state',
-        description:
-          'Enable or disable a node module in Node-RED. When disabled, the module nodes are unavailable.',
+        description: 'Enable or disable a node module; a disabled module has no usable nodes.',
         inputSchema: {
           type: 'object',
           properties: {
             module: {
               type: 'string',
-              description: 'Name of the node module to enable/disable',
             },
             enabled: {
               type: 'boolean',
-              description: 'Whether to enable (true) or disable (false) the module',
             },
           },
           required: ['module', 'enabled'],
@@ -493,13 +458,12 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'remove_node_module',
-        description: 'Remove an installed node module from Node-RED. Cannot remove core modules.',
+        description: 'Remove an installed node module. Core modules cannot be removed.',
         inputSchema: {
           type: 'object',
           properties: {
             module: {
               type: 'string',
-              description: 'Name of the node module to remove',
             },
           },
           required: ['module'],
@@ -507,8 +471,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'get_settings',
-        description:
-          'Get the runtime settings of the Node-RED instance. Returns server configuration including version, httpNodeRoot, and user info.',
+        description: 'Runtime settings: version, httpNodeRoot, user and more.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -516,8 +479,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'get_diagnostics',
-        description:
-          'Get diagnostic information about the Node-RED runtime. Returns system info including Node.js version, OS details, and memory usage.',
+        description: 'Runtime diagnostics: Node.js version, OS details and memory usage.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -525,14 +487,12 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'trigger_inject',
-        description:
-          'Trigger an inject node to fire with its configured values. The node must be a deployed inject node.',
+        description: 'Fire a deployed inject node with its configured values.',
         inputSchema: {
           type: 'object',
           properties: {
             nodeId: {
               type: 'string',
-              description: 'ID of the inject node to trigger',
             },
           },
           required: ['nodeId'],
@@ -540,18 +500,15 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'set_debug_state',
-        description:
-          'Enable or disable a debug node. When disabled, the debug node will not produce output.',
+        description: 'Enable or disable a debug node; a disabled node produces no output.',
         inputSchema: {
           type: 'object',
           properties: {
             nodeId: {
               type: 'string',
-              description: 'ID of the debug node',
             },
             enabled: {
               type: 'boolean',
-              description: 'Whether to enable (true) or disable (false) the debug node',
             },
           },
           required: ['nodeId', 'enabled'],

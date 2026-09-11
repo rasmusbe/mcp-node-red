@@ -62,6 +62,10 @@ session and makes startup depend on Node-RED answering.
 
 - [x] Optimistic locking with `rev` for global flow writes (subflow and global config node tools)
 
+### Batch 7, tool list size
+
+- [x] Tool descriptions shortened; serialized list under 9,000 characters, guarded by a test
+
 ## Design (batch 1)
 
 **create_flow without id.** `POST /flow` generates an id when none is sent, but the tool
@@ -298,6 +302,19 @@ and the two lists are read with `?? []`; the definition and the replacement list
 tools still write parsed copies where the item is new (`create_flow`, `create_subflow`,
 `create_global_config_node`), since there is no stored order to keep. `listTabs` parses a
 stripping schema, and nothing writes its result back.
+
+## Design (batch 7)
+
+**Tool list size.** The serialized tool list goes to the model at the start of every session, and
+the tools added since batch 3 had grown it from 9,879 to 13,183 characters. Each description is
+now one sentence, restatements of the HTTP endpoint and "from Node-RED" filler are gone, and a
+parameter whose name and type already say everything carries no description. The behavioural facts
+stay: which tool to prefer, what is not valid input, what a filter matches, what an operation
+refuses. The optimistic locking sentence that was repeated on six tools is now one clause on
+`create_subflow` and one on `create_global_config_node`, scoped to the whole family, and the
+"a JSON string is also accepted" note is gone from all seven object parameters, since the schema
+says `object` and the string tolerance is only there for older clients. The total is 8,676
+characters, and `tests/server.test.ts` fails if it passes 9,500.
 
 ## References
 

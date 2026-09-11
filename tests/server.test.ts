@@ -86,6 +86,21 @@ describe('MCP Server', () => {
     await server.close();
   });
 
+  // The serialized tool list is sent to the model at the start of every session, so it is kept
+  // small on purpose; this cap catches a description that grows back.
+  it('should keep the serialized tool list small', async () => {
+    process.env.NODE_RED_URL = 'http://localhost:1880';
+
+    const { client, server } = await connectedClient();
+
+    const { tools } = await client.listTools();
+
+    expect(JSON.stringify(tools).length).toBeLessThan(9500);
+
+    await client.close();
+    await server.close();
+  });
+
   it('should report the version from package.json', async () => {
     process.env.NODE_RED_URL = 'http://localhost:1880';
 
