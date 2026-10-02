@@ -153,7 +153,7 @@ Note: No `NODE_RED_TOKEN` needed - credentials are in the URL.
 - **get_flow**: Retrieve a flow by ID, with optional `nodeIds` and `types` filters and a `summary` mode that keeps only structure
 - **create_flow**: Create new flows via POST /flow
 - **update_flow**: Replace a whole flow safely via PUT /flow/:id
-- **patch_flow**: Change part of a flow: add, update and remove nodes and flow-scoped config nodes without resending the rest
+- **patch_flow**: Change part of a flow: add, update, string-replace and remove nodes and flow-scoped config nodes without resending the rest
 - **validate_flow**: Validate a flow without deploying: required fields, unique ids, wires and group references that resolve, `z` matching the flow, and every node type installed or a known subflow
 - **delete_flow**: Delete a flow and all its nodes by ID
 

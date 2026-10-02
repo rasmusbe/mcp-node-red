@@ -146,7 +146,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'patch_flow',
         description:
-          'Change part of a flow without resending it, applying remove, update (shallow merge by id) and add of nodes and flow-scoped config nodes in that order, plus label, disabled and info. Wires and group membership pointing at removed nodes are cleaned up. Prefer this over update_flow. The read and the write are separate, so an editor deploy in between is overwritten.',
+          'Change part of a flow without resending it, applying remove, update (shallow merge by id), string replace and add of nodes and flow-scoped config nodes in that order, plus label, disabled and info. Wires and group membership pointing at removed nodes are cleaned up. Prefer this over update_flow. The read and the write are separate, so an editor deploy in between is overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -173,6 +173,25 @@ export function createServer(options?: { client?: NodeRedClient }) {
               items: { type: 'object' },
               description:
                 'Patches, each with the id of an existing node and the properties to merge; arrays such as wires are replaced whole.',
+            },
+            replaceStrings: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  property: {
+                    type: 'string',
+                    description: 'Top-level string property, e.g. func.',
+                  },
+                  old: { type: 'string' },
+                  new: { type: 'string' },
+                  replaceAll: { type: 'boolean' },
+                },
+                required: ['id', 'property', 'old', 'new'],
+              },
+              description:
+                'Exact text replacements inside a string property, applied after updateNodes. Fails when old is missing, or occurs more than once without replaceAll. Use it for a small change in func or template instead of resending the whole text.',
             },
             addNodes: {
               type: 'array',

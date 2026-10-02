@@ -24,6 +24,17 @@ const PatchFlowArgsSchema = z.object({
   info: z.string().optional(),
   removeNodeIds: z.array(z.string()).optional(),
   updateNodes: z.array(NodePatchSchema).optional(),
+  replaceStrings: z
+    .array(
+      z.object({
+        id: z.string(),
+        property: z.string(),
+        old: z.string().min(1),
+        new: z.string(),
+        replaceAll: z.boolean().optional(),
+      })
+    )
+    .optional(),
   addNodes: z.array(NodeRedNodeSchema).optional(),
   addConfigs: z.array(NodeRedConfigSchema).optional(),
 });
@@ -60,6 +71,7 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
 
   const removeNodeIds = parsed.removeNodeIds ?? [];
   const updateNodes = parsed.updateNodes ?? [];
+  const replaceStrings = parsed.replaceStrings ?? [];
   const addNodes = parsed.addNodes ?? [];
   const addConfigs = parsed.addConfigs ?? [];
 
@@ -70,11 +82,12 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     !setsFlowFields &&
     removeNodeIds.length === 0 &&
     updateNodes.length === 0 &&
+    replaceStrings.length === 0 &&
     addNodes.length === 0 &&
     addConfigs.length === 0
   ) {
     throw new Error(
-      'No changes requested. Pass at least one of label, disabled, info, removeNodeIds, updateNodes, addNodes or addConfigs'
+      'No changes requested. Pass at least one of label, disabled, info, removeNodeIds, updateNodes, replaceStrings, addNodes or addConfigs'
     );
   }
 
@@ -120,6 +133,35 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     }
   }
 
+  for (const edit of replaceStrings) {
+    const list = nodes.some((node) => node.id === edit.id) ? nodes : configs;
+    const index = list.findIndex((item) => item.id === edit.id);
+    if (index === -1) {
+      throw new Error(`Node with id "${edit.id}" not found in flow "${flowId}"`);
+    }
+
+    const target = list[index] as Record<string, unknown>;
+    const current = target[edit.property];
+    if (typeof current !== 'string') {
+      throw new Error(`Property "${edit.property}" of node "${edit.id}" is not a string`);
+    }
+
+    const count = current.split(edit.old).length - 1;
+    if (count === 0) {
+      throw new Error(
+        `"${edit.old}" not found in property "${edit.property}" of node "${edit.id}"`
+      );
+    }
+    if (count > 1 && !edit.replaceAll) {
+      throw new Error(
+        `"${edit.old}" occurs ${count} times in property "${edit.property}" of node "${edit.id}"; make it unique or set replaceAll`
+      );
+    }
+
+    // split/join rather than replaceAll: a $& or $1 in the new text must stay literal.
+    list[index] = { ...target, [edit.property]: current.split(edit.old).join(edit.new) } as never;
+  }
+
   const claimId = (id: string) => {
     if (nodes.some((node) => node.id === id) || configs.some((config) => config.id === id)) {
       throw new Error(`Node with id "${id}" already exists in flow "${flowId}"`);
@@ -157,6 +199,7 @@ export async function patchFlow(client: NodeRedClient, args: unknown) {
     id: flowId,
     removed: removed.size,
     updated: updateNodes.length,
+    replaced: replaceStrings.length,
     added: addNodes.length + addConfigs.length,
     nodes: nodes.length,
     configs: configs.length,

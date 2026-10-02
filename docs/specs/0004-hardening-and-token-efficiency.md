@@ -35,6 +35,7 @@ the network or the caller misbehaves, and how much of the context window a call 
 ### Batch 3, token usage (large)
 
 - [x] `patch_flow` tool for partial flow updates (add, replace, remove nodes, label, disabled)
+- [x] `patch_flow` `replaceStrings` for exact text replacement inside a string property
 - [x] `get_flow` selection parameters (`nodeIds`, `types`, `summary`)
 - [x] Flow, subflow and config node parameters accepted as objects, strings still tolerated
 

@@ -37,6 +37,7 @@ describe('patchFlow', () => {
       id: 'flow1',
       removed: 1,
       updated: 0,
+      replaced: 0,
       added: 0,
       nodes: 3,
       configs: 1,
@@ -81,6 +82,28 @@ describe('patchFlow', () => {
       g: 'g1',
       wires: [['n1']],
     });
+  });
+
+  it('should replace text inside a string property', async () => {
+    await patchFlow(mockClient, {
+      flowId: 'flow1',
+      replaceStrings: [{ id: 'n2', property: 'func', old: 'msg', new: '$&-x' }],
+    });
+
+    expect(written().nodes.find((n: any) => n.id === 'n2').func).toBe('return $&-x;');
+  });
+
+  it('should reject a replace with no match, several matches or a non-string property', async () => {
+    const run = (edit: object) =>
+      patchFlow(mockClient, { flowId: 'flow1', replaceStrings: [{ id: 'n2', ...edit }] });
+
+    await expect(run({ property: 'func', old: 'zzz', new: 'a' })).rejects.toThrow('not found');
+    await expect(run({ property: 'func', old: 'r', new: 'a' })).rejects.toThrow('occurs 2 times');
+    await expect(run({ property: 'wires', old: 'a', new: 'b' })).rejects.toThrow('not a string');
+    expect(mockClient.updateFlow).not.toHaveBeenCalled();
+
+    await run({ property: 'func', old: 'r', new: 'a', replaceAll: true });
+    expect(written().nodes.find((n: any) => n.id === 'n2').func).toBe('aetuan msg;');
   });
 
   it('should update a flow-scoped config node', async () => {
