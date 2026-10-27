@@ -47,14 +47,16 @@ const { version } = createRequire(import.meta.url)('../package.json') as { versi
 
 const READ_ONLY: ToolAnnotations = { readOnlyHint: true };
 const WRITE: ToolAnnotations = { destructiveHint: false, idempotentHint: true };
-const DESTRUCTIVE: ToolAnnotations = { idempotentHint: true };
+const REPLACE: ToolAnnotations = { idempotentHint: true };
+const DESTRUCTIVE: ToolAnnotations = {};
 
 /**
  * Hints that let a client tell reads from writes instead of treating every tool as a write.
  * Without them the protocol default is a destructive, non-idempotent write, so only the
  * differences from that default are spelled out, which keeps the tool list small. The update
- * tools replace what they are given, so they count as destructive; patch_flow changes only the
- * parts it is told to.
+ * tools replace what they are given, so they count as destructive but idempotent; the delete and
+ * remove tools fail on a second call, so they are not. patch_flow changes only the parts it is
+ * told to.
  */
 const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   list_flows: READ_ONLY,
@@ -76,9 +78,9 @@ const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   set_debug_state: WRITE,
   trigger_inject: { destructiveHint: false },
   install_node: { destructiveHint: false },
-  update_flow: DESTRUCTIVE,
-  update_subflow: DESTRUCTIVE,
-  update_global_config_node: DESTRUCTIVE,
+  update_flow: REPLACE,
+  update_subflow: REPLACE,
+  update_global_config_node: REPLACE,
   delete_flow: DESTRUCTIVE,
   delete_subflow: DESTRUCTIVE,
   delete_global_config_node: DESTRUCTIVE,
@@ -121,8 +123,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
     tools: [
       {
         name: 'list_flows',
-        description:
-          'List the flow tabs: id, label and disabled. Use before get_flow to discover flow IDs.',
+        description: 'List the flow tabs: id, label and disabled.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -131,7 +132,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_flow',
         description:
-          'Get a flow tab with its nodes and flow-scoped config nodes. nodeIds and types keep a node when either filter matches it. summary reduces each node to id, type, name, group and wires, which is not valid input for update_flow; use patch_flow for changes.',
+          'Get a flow tab with its nodes and flow-scoped config nodes. A node is kept when either nodeIds or types matches it.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -150,7 +151,8 @@ export function createServer(options?: { client?: NodeRedClient }) {
             },
             summary: {
               type: 'boolean',
-              description: 'Reduce each node to id, type, name, group and wires.',
+              description:
+                'Reduce each node to id, type, name, group and wires. Not valid input for update_flow.',
             },
           },
           required: ['flowId'],
@@ -158,7 +160,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'create_flow',
-        description: 'Create a flow tab. The id is generated when omitted.',
+        description: 'Create a flow tab.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -173,7 +175,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'update_flow',
         description:
-          'Replace one flow with what is sent, leaving other flows untouched; the whole node list has to be included, so prefer patch_flow to change part of a flow.',
+          'Replace one flow with what is sent, leaving other flows untouched. The whole node list has to be included.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -191,7 +193,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'patch_flow',
         description:
-          'Change part of a flow without resending it, applying remove, update (shallow merge by id), string replace and add of nodes and flow-scoped config nodes in that order, plus label, disabled and info. Wires and group membership pointing at removed nodes are cleaned up. Prefer this over update_flow. The read and the write are separate, so an editor deploy in between is overwritten.',
+          'Change part of a flow without resending it. Operations run in the order remove, update, replace, add. Prefer this over update_flow. An editor deploy between its read and write is overwritten.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -211,7 +213,8 @@ export function createServer(options?: { client?: NodeRedClient }) {
             removeNodeIds: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Ids of nodes or config nodes to remove.',
+              description:
+                'Ids of nodes or config nodes to remove; wires and groups pointing at them are cleaned up.',
             },
             updateNodes: {
               type: 'array',
@@ -236,7 +239,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
                 required: ['id', 'property', 'old', 'new'],
               },
               description:
-                'Exact text replacements inside a string property, applied after updateNodes. Fails when old is missing, or occurs more than once without replaceAll. Use it for a small change in func or template instead of resending the whole text.',
+                'Exact text replacements inside a string property. Fails when old is missing, or occurs more than once without replaceAll. Use for small edits to func or template.',
             },
             addNodes: {
               type: 'array',
@@ -255,7 +258,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'validate_flow',
         description:
-          'Check a flow without deploying it: required fields, unique ids, wires and group references that resolve, z matching the flow, and every node type installed or a known subflow.',
+          'Check a flow without deploying it: ids, wires, group references, z and whether every node type is installed.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -290,8 +293,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'create_subflow',
-        description:
-          'Create a subflow definition, a reusable component with named inputs and outputs. Subflow writes detect a concurrent editor deploy and retry once.',
+        description: 'Create a subflow definition.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -338,7 +340,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'create_global_config_node',
         description:
-          'Create a global config node, reachable from all flows. Errors if the id exists or the node has a z property. Global config node writes detect a concurrent editor deploy and retry once.',
+          'Create a global config node, reachable from all flows. Errors if the id exists or the node has a z property.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -425,7 +427,6 @@ export function createServer(options?: { client?: NodeRedClient }) {
             },
             store: {
               type: 'string',
-              description: 'Context store name.',
             },
           },
           required: ['scope'],
@@ -450,7 +451,6 @@ export function createServer(options?: { client?: NodeRedClient }) {
             },
             store: {
               type: 'string',
-              description: 'Context store name.',
             },
           },
           required: ['scope', 'key'],
@@ -459,7 +459,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       {
         name: 'get_nodes',
         description:
-          'List installed node modules with version, enabled state and the types each node set registers. Use get_node_help for the documentation of a type.',
+          'List installed node modules with version, enabled state and the types each node set registers.',
         inputSchema: {
           type: 'object',
           properties: {},
@@ -506,7 +506,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'set_node_module_state',
-        description: 'Enable or disable a node module; a disabled module has no usable nodes.',
+        description: 'Enable or disable a node module.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -564,7 +564,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
       },
       {
         name: 'set_debug_state',
-        description: 'Enable or disable a debug node; a disabled node produces no output.',
+        description: 'Enable or disable a debug node.',
         inputSchema: {
           type: 'object',
           properties: {

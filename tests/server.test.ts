@@ -122,7 +122,7 @@ describe('MCP Server', () => {
 
     const { tools } = await client.listTools();
 
-    expect(JSON.stringify(tools).length).toBeLessThan(10500);
+    expect(JSON.stringify(tools).length).toBeLessThan(9500);
 
     await client.close();
     await server.close();
