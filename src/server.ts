@@ -1,6 +1,10 @@
 import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type ToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
 import { NodeRedClient } from './client.js';
 import { formatZodError } from './errors.js';
@@ -40,6 +44,47 @@ import { validateFlow } from './tools/validate-flow.js';
  * level below the repo root, so the same relative path works for tests and for the build.
  */
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
+
+const READ_ONLY: ToolAnnotations = { readOnlyHint: true };
+const WRITE: ToolAnnotations = { destructiveHint: false, idempotentHint: true };
+const DESTRUCTIVE: ToolAnnotations = { idempotentHint: true };
+
+/**
+ * Hints that let a client tell reads from writes instead of treating every tool as a write.
+ * Without them the protocol default is a destructive, non-idempotent write, so only the
+ * differences from that default are spelled out, which keeps the tool list small. The update
+ * tools replace what they are given, so they count as destructive; patch_flow changes only the
+ * parts it is told to.
+ */
+const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
+  list_flows: READ_ONLY,
+  get_flow: READ_ONLY,
+  validate_flow: READ_ONLY,
+  get_subflows: READ_ONLY,
+  get_flow_state: READ_ONLY,
+  get_context: READ_ONLY,
+  get_nodes: READ_ONLY,
+  get_node_help: READ_ONLY,
+  get_settings: READ_ONLY,
+  get_diagnostics: READ_ONLY,
+  create_flow: { destructiveHint: false },
+  create_subflow: { destructiveHint: false },
+  create_global_config_node: { destructiveHint: false },
+  patch_flow: { destructiveHint: false },
+  set_flow_state: WRITE,
+  set_node_module_state: WRITE,
+  set_debug_state: WRITE,
+  trigger_inject: { destructiveHint: false },
+  install_node: { destructiveHint: false },
+  update_flow: DESTRUCTIVE,
+  update_subflow: DESTRUCTIVE,
+  update_global_config_node: DESTRUCTIVE,
+  delete_flow: DESTRUCTIVE,
+  delete_subflow: DESTRUCTIVE,
+  delete_global_config_node: DESTRUCTIVE,
+  delete_context: DESTRUCTIVE,
+  remove_node_module: DESTRUCTIVE,
+};
 
 /** The client for one Node-RED instance, configured from the environment. */
 export function createClient(): NodeRedClient {
@@ -533,7 +578,7 @@ export function createServer(options?: { client?: NodeRedClient }) {
           required: ['nodeId', 'enabled'],
         },
       },
-    ],
+    ].map((tool) => ({ ...tool, annotations: TOOL_ANNOTATIONS[tool.name] })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

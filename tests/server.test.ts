@@ -86,6 +86,33 @@ describe('MCP Server', () => {
     await server.close();
   });
 
+  it('should annotate every tool so reads are not treated as writes', async () => {
+    process.env.NODE_RED_URL = 'http://localhost:1880';
+
+    const { client, server } = await connectedClient();
+
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool.annotations]));
+
+    for (const tool of tools) {
+      expect(tool.annotations, tool.name).toBeDefined();
+    }
+    for (const name of ['list_flows', 'get_flow', 'get_nodes', 'get_context', 'validate_flow']) {
+      expect(byName.get(name)?.readOnlyHint, name).toBe(true);
+    }
+    for (const name of ['create_flow', 'patch_flow', 'set_flow_state', 'install_node']) {
+      expect(byName.get(name)?.readOnlyHint, name).not.toBe(true);
+      expect(byName.get(name)?.destructiveHint, name).toBe(false);
+    }
+    for (const name of ['delete_flow', 'update_flow', 'remove_node_module', 'delete_context']) {
+      expect(byName.get(name)?.readOnlyHint, name).not.toBe(true);
+      expect(byName.get(name)?.destructiveHint, name).not.toBe(false);
+    }
+
+    await client.close();
+    await server.close();
+  });
+
   // The serialized tool list is sent to the model at the start of every session, so it is kept
   // small on purpose; this cap catches a description that grows back.
   it('should keep the serialized tool list small', async () => {
@@ -95,7 +122,7 @@ describe('MCP Server', () => {
 
     const { tools } = await client.listTools();
 
-    expect(JSON.stringify(tools).length).toBeLessThan(9500);
+    expect(JSON.stringify(tools).length).toBeLessThan(10500);
 
     await client.close();
     await server.close();
